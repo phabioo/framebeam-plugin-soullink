@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="height:100%;box-sizing:border-box;display:flex;flex-direction:column;padding:{{ pad }};gap:{{ gap }};background:{{ t.bg }};color:{{ t.text }};font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px;overflow:hidden">
+  <sc-if value="{{ paused }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:1;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:10px">
+      <span style="font:500 11px 'IBM Plex Mono',monospace;color:{{ t.warn }};letter-spacing:.08em">PAUSED</span>
+      <span style="font-size:15px;font-weight:600;line-height:1.4;text-wrap:pretty">SoulLink &amp; Nuzlocke was paused after an error.</span>
+      <span style="font-size:13px;color:{{ t.mut }};line-height:1.5">Your game keeps running. Encounters from now on are not tracked until the plugin restarts.</span>
+      <div style="display:flex;gap:8px"><span style="flex:none;white-space:nowrap;height:34px;padding:0 12px;border-radius:7px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-weight:600">Restart plugin</span><span style="flex:none;white-space:nowrap;height:34px;padding:0 12px;border-radius:7px;border:1px solid {{ t.btnLine }};display:flex;align-items:center;font-weight:500">Details</span></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ live }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;align-items:center;gap:8px"><span style="font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }};letter-spacing:.08em">SOULLINK RUN</span><span style="font-size:12px;color:{{ t.mut }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Ember &amp; Tide</span><span style="margin-left:auto;font-size:12px;font-weight:500;color:{{ t.accentText }};white-space:nowrap">Open run →</span></div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-radius:9px;background:{{ t.card }};border:1px solid {{ t.line }}">
+      <div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:17px;font-weight:600">Route 104</span><span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:{{ locBg }};color:{{ locFg }};white-space:nowrap"><span style="width:6px;height:6px;border-radius:50%;background:{{ locFg }}"></span>{{ locText }}</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid {{ t.line }}">
+        <span style="font-size:11px;color:{{ t.mut3 }}">Others on Route 104</span>
+        <sc-for list="{{ partners }}" as="p" hint-placeholder-count="3">
+          <div style="display:grid;grid-template-columns:8px 52px minmax(0,1fr) 24px;gap:8px;align-items:center;min-height:20px"><span style="width:8px;height:8px;border-radius:50%;background:{{ p.c }}"></span><span style="font-weight:500">{{ p.who }}</span><span style="font-size:12px;color:{{ p.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.status }}</span><sc-if value="{{ p.hasIcon }}" hint-placeholder-val="{{ false }}"><dc-import name="creature-icon" species="{{ p.sp }}" size="mini" light="{{ light }}" hint-size="24px,18px"></dc-import></sc-if></div>
+        </sc-for>
+      </div>
+    </div>
+
+    <sc-if value="{{ hint }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;background:{{ t.accentBg }};border:1px solid {{ t.accentLine }}">
+        <dc-import name="creature-icon" species="Tidepup" size="box" light="{{ light }}" hint-size="40px,30px"></dc-import>
+        <div style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-size:11px;color:{{ t.accentText }};font-weight:600">Encounter detected</span><span style="font-weight:500">Wild Tidepup · first on this route</span></div>
+        <span title="Ctrl+D" style="margin-left:auto;height:28px;padding:0 9px;border-radius:6px;border:1px solid {{ t.accentLine }};display:flex;align-items:center;font-size:12px;font-weight:500;white-space:nowrap">Doesn’t count</span>
+      </div>
+    </sc-if>
+
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <div style="display:flex;align-items:center;padding-bottom:6px"><span style="font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }};letter-spacing:.08em">YOUR TEAM · 5/6</span><span style="margin-left:auto;font-size:11px;color:{{ t.mut3 }}">linked with</span></div>
+      <sc-for list="{{ team }}" as="m" hint-placeholder-count="6">
+        <div style="display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 0;border-top:1px solid {{ t.line }}">
+          <dc-import name="creature-icon" species="{{ m.sp }}" state="{{ m.state }}" light="{{ light }}" hint-size="40px,30px"></dc-import>
+          <sc-if value="{{ m.filled }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+              <div style="display:flex;align-items:baseline;gap:6px;white-space:nowrap"><span style="font-weight:600;overflow:hidden;text-overflow:ellipsis">{{ m.nick }}</span><span style="font-size:11px;color:{{ t.mut2 }};overflow:hidden;text-overflow:ellipsis">{{ m.sp }}</span><span style="margin-left:auto;font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut }}">Lv {{ m.lv }}</span></div>
+              <div style="height:4px;border-radius:2px;background:{{ t.track }};overflow:hidden"><div style="height:100%;width:{{ m.hpW }};background:{{ m.hpC }};border-radius:2px"></div></div>
+            </div>
+            <div style="display:flex;gap:3px">
+              <sc-for list="{{ m.links }}" as="l" hint-placeholder-count="3"><dc-import name="creature-icon" species="{{ l.sp }}" size="mini" owner="{{ l.c }}" state="{{ l.state }}" light="{{ light }}" hint-size="24px,18px"></dc-import></sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ m.empty }}" hint-placeholder-val="{{ false }}"><span style="font-size:12px;color:{{ t.mut3 }}">Empty slot</span><span></span></sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:0;border-top:1px solid {{ t.line }}">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid {{ t.line }}"><span style="font-size:10px;color:{{ t.mut3 }}">▸</span><span style="font-weight:500">Graveyard</span><span style="font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut2 }}">3</span><div style="margin-left:auto;display:flex;gap:3px"><dc-import name="creature-icon" species="Brinecrab" size="mini" state="dead" light="{{ light }}" hint-size="24px,18px"></dc-import><dc-import name="creature-icon" species="Fernfox" size="mini" state="dead" light="{{ light }}" hint-size="24px,18px"></dc-import><dc-import name="creature-icon" species="Duskowl" size="mini" state="dead" light="{{ light }}" hint-size="24px,18px"></dc-import></div></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 0"><span style="color:{{ t.mut2 }}">Badges</span><span style="font:500 12px 'IBM Plex Mono',monospace">4 / 8</span><span style="color:{{ t.mut3 }}">·</span><span style="color:{{ t.mut2 }}">Next cap Lv 24</span><span style="margin-left:auto;font-size:12px;font-weight:500;color:{{ t.accentText }};white-space:nowrap">Run screen →</span></div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:340,&quot;height&quot;:800},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;compact&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;hint&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;loc&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;none&quot;,&quot;detected&quot;,&quot;caught&quot;,&quot;missed&quot;,&quot;noroute&quot;],&quot;default&quot;:&quot;none&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;state&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;live&quot;,&quot;paused&quot;],&quot;default&quot;:&quot;live&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props, light = !!(p.theme === 'light'), compact = !!p.compact;
+    const t = light ? { bg: '#f6f5f2', card: '#ffffff', line: '#e3e1dc', text: '#1b1b1d', mut: '#55544f', mut2: '#6b6a66', mut3: '#8a8984', accentText: '#1a7f96', accentBg: '#ddf1f6', accentLine: '#a9dbe6', ok: '#2f7d4f', okBg: '#e2f3e8', warn: '#8a5a00', btnLine: '#cfcdc7', track: '#e3e1dc', hpOk: '#3f9e63', hpMid: '#c48a1a', hpLow: '#b5402f' }
+      : { bg: '#111214', card: '#16171a', line: '#232428', text: '#ecebe7', mut: '#a3a3a8', mut2: '#8e8e94', mut3: '#7d7d83', accentText: '#3cbfd8', accentBg: '#15262b', accentLine: '#1f4650', ok: '#6fd39a', okBg: '#17291f', warn: '#e5b45a', btnLine: '#3a3b40', track: '#26272b', hpOk: '#6fd39a', hpMid: '#e5b45a', hpLow: '#ef8a78' };
+    const C = light ? { Lena: '#b8327a', Jonas: '#4d7a14', Sam: '#6a4fc4' } : { Lena: '#f07ab8', Jonas: '#a6d65a', Sam: '#b39cf5' };
+    const loc = p.loc ?? (p.hint ? 'detected' : 'none');
+    const L = { none: ['No encounter yet', t.accentBg, t.accentText], detected: ['Encounter now', t.accentBg, t.accentText], caught: ['Caught Mossling', t.okBg, t.ok], missed: ['Missed', light ? '#e9e8e4' : '#232428', t.mut], noroute: ['Not a route', light ? '#e9e8e4' : '#232428', t.mut] }[loc];
+    const hp = v => v > .5 ? t.hpOk : v > .2 ? t.hpMid : t.hpLow;
+    const lk = (a, b, c) => [{ sp: a, c: C.Lena, state: 'alive' }, { sp: b, c: C.Jonas, state: 'alive' }, { sp: c, c: C.Sam, state: 'alive' }];
+    const team = [
+      { nick: 'Sprig', sp: 'Mossling', lv: 18, hp: .82, links: lk('Tidepup', 'Voltwing', 'Duskowl') },
+      { nick: 'Cinder', sp: 'Emberkit', lv: 17, hp: .54, links: lk('Brinecrab', 'Pebblor', 'Fernfox') },
+      { nick: 'Zap', sp: 'Voltwing', lv: 16, hp: .18, links: lk('Glimmoth', 'Shellsprout', 'Frostkit') },
+      { nick: 'Lumi', sp: 'Glimmoth', lv: 15, hp: 1, links: lk('Cinderhog', 'Mossling', 'Pebblor') },
+      { nick: 'Rocco', sp: 'Pebblor', lv: 16, hp: .66, links: lk('Frostkit', 'Emberkit', 'Tidepup') },
+      { empty: true, sp: 'Emberkit', state: 'empty' }
+    ].map(m => m.empty ? { ...m, filled: false, links: [] } : { ...m, state: 'alive', filled: true, empty: false, hpW: Math.round(m.hp * 100) + '%', hpC: hp(m.hp), links: compact ? m.links.slice(0, 2) : m.links });
+    return {
+      t, light, pad: compact ? '14px 16px' : '18px 20px', gap: compact ? '12px' : '16px', paused: p.state === 'paused', live: p.state !== 'paused', hint: !!p.hint,
+      locText: L[0], locBg: L[1], locFg: L[2], team,
+      partners: [
+        { who: 'Lena', c: C.Lena, status: 'caught Tidepup', sp: 'Tidepup', hasIcon: true, fg: t.text },
+        { who: 'Jonas', c: C.Jonas, status: 'no encounter yet', hasIcon: false, fg: t.mut2 },
+        { who: 'Sam', c: C.Sam, status: 'missed · fled', hasIcon: false, fg: t.mut2 }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

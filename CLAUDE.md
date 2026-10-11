@@ -37,5 +37,5 @@ framebeam-plugin-soullink is the SoulLink/Nuzlocke plugin. A group of 2 to 4 pla
 
 ## Pointers
 
-- Plan and status: `docs/roadmap.md`. Workflow, roles and brief template: `docs/workflow.md`.
+- Plan and status: `docs/roadmap.md`. Workflow, roles and brief template: `docs/workflow.md`. UI design: `docs/design/README.md`.
 - FrameBeam docs: https://github.com/phabioo/framebeam (`docs/architecture/12-plugins.md`, `docs/adr/0023-plugins.md`).

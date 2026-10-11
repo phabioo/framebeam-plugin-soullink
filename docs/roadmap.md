@@ -8,7 +8,7 @@ Status: planned, nothing implemented. Depends on FrameBeam plugin API v1 (0.11, 
 - Detection via `framebeam-plugin-pokemon-core`: location, encounter (kind), catch, team, box change, death, badges.
 - Manual correction of everything (encounter does not count, undo death, change pairing, add Pokémon); every change is in the event log with the user name.
 - Views: in-game tab (team, location status, partner of the route, graveyard), HUD, Multiview tile overlay, run screen (routes table routes x players, map, log, graveyard), Hub run board and session view (also as OBS source).
-- Design screens 5a to 5i come from the Claude Design handoff and are added to `docs/design/` in this repository.
+- Design screens 5a to 5i (Claude Design handoff, accepted 2026-10-11): done, see [design/README.md](design/README.md). Open design questions are listed there.
 - Playtest with the group, then feedback into platform and plugin.
 
 ## Later
