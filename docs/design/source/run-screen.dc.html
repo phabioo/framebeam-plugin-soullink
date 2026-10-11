@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="width:1440px;height:900px;background:{{ t.bg }};color:{{ t.text }};display:grid;grid-template-columns:232px minmax(0,1fr);overflow:hidden;border-radius:10px;box-shadow:0 30px 60px rgba(0,0,0,.25);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px">
+  <aside style="background:{{ t.side }};border-right:1px solid {{ t.line }};display:flex;flex-direction:column;padding:24px 16px;gap:28px">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 8px"><dc-import name="framebeam-mark" concept="a" product="{{ product }}" palette="signal" tone="{{ markTone }}" size="22" hint-size="22px,22px"></dc-import><div style="font-weight:600;font-size:16px">{{ appName }}</div></div>
+    <nav style="display:flex;flex-direction:column;gap:2px;font-size:14px"><sc-for list="{{ nav }}" as="n" hint-placeholder-count="5"><div style="padding:{{ n.pad }};border-radius:6px;background:{{ n.bg }};box-shadow:{{ n.ring }};font-weight:{{ n.fw }};color:{{ n.fg }};display:flex;align-items:center;gap:8px"><sc-if value="{{ n.icon }}" hint-placeholder-val="{{ false }}"><span style="width:16px;height:16px;border-radius:4px;background:{{ t.chip }};font:600 8px/16px 'IBM Plex Mono',monospace;text-align:center;color:{{ t.text }}">SL</span></sc-if>{{ n.l }}</div></sc-for></nav>
+  </aside>
+  <main style="display:flex;flex-direction:column;min-width:0;padding:22px 32px 24px;gap:14px;overflow:hidden">
+    <div style="font-size:13px;color:{{ t.mut }}">← Runs</div>
+    <header style="display:flex;align-items:center;gap:12px">
+      <span style="font-size:24px;font-weight:600;letter-spacing:-.01em">Ember &amp; Tide</span>
+      <span style="font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:{{ t.accentBg }};color:{{ t.accentText }}">Active · SoulLink</span>
+      <div style="display:flex;gap:6px;margin-left:8px"><sc-for list="{{ players }}" as="p" hint-placeholder-count="4"><span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px 0 3px;border-radius:999px;background:{{ t.chip }};font-size:12px"><span style="width:20px;height:20px;border-radius:50%;background:{{ p.c }};color:{{ t.avFg }};display:grid;place-items:center;font-size:10px;font-weight:700">{{ p.i }}</span>{{ p.loc }}</span></sc-for></div>
+      <div style="margin-left:auto;display:flex;gap:16px;font-size:12px;color:{{ t.mut }}"><span>Deaths <b style="color:{{ t.text }};font-family:'IBM Plex Mono',monospace">7</b></span><span>Routes <b style="color:{{ t.text }};font-family:'IBM Plex Mono',monospace">9 / 31</b></span><span>Badges <b style="color:{{ t.text }};font-family:'IBM Plex Mono',monospace">4</b></span></div>
+      <span style="height:32px;padding:0 12px;border-radius:7px;border:1px solid {{ t.btnLine }};display:flex;align-items:center;font-weight:500">Rules</span>
+    </header>
+    <div style="display:flex;height:38px;border-bottom:1px solid {{ t.line }};flex:none"><sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="5"><span style="padding:0 12px;display:flex;align-items:center;gap:6px;color:{{ tb.fg }};font-weight:{{ tb.fw }};box-shadow:{{ tb.bar }}">{{ tb.l }}<span style="font:400 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }}">{{ tb.n }}</span></span></sc-for></div>
+
+    <sc-if value="{{ isMap }}" hint-placeholder-val="{{ true }}"><div style="flex:1;min-height:0"><dc-import name="region-map" w="{{ 1144 }}" h="{{ 660 }}" theme="{{ theme }}" selected="r104" radius="10px" hint-size="1144px,660px"></dc-import></div></sc-if>
+
+    <sc-if value="{{ isRoutes }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:10px"><div style="display:flex;gap:2px;padding:3px;border-radius:7px;background:{{ t.segBg }};border:1px solid {{ t.line2 }};font-size:12px"><span style="padding:4px 10px;border-radius:5px;background:{{ t.segOn }};font-weight:500">All · 12</span><span style="padding:4px 10px;color:{{ t.mut }}">Open · 3</span><span style="padding:4px 10px;color:{{ t.mut }}">Complete · 9</span></div><span style="margin-left:auto;height:30px;padding:0 10px;border-radius:6px;background:{{ t.field }};border:1px solid {{ t.line2 }};display:flex;align-items:center;gap:6px;font-size:12px"><span style="color:{{ t.mut2 }}">Sort:</span>Route order ▾</span><span style="height:30px;padding:0 10px;border-radius:6px;border:1px solid {{ t.btnLine }};display:flex;align-items:center;font-size:12px;font-weight:500">+ Add by hand</span></div>
+      <div style="border-radius:10px;border:1px solid {{ t.line }};background:{{ t.card }};overflow:hidden">
+        <div style="display:grid;grid-template-columns:150px repeat(4,minmax(0,1fr)) 90px 110px;gap:10px;padding:9px 16px;font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }};letter-spacing:.06em;border-bottom:1px solid {{ t.line }}"><span>ROUTE ▾</span><sc-for list="{{ players }}" as="p" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:{{ p.c }}"></span>{{ p.up }}</span></sc-for><span>LINK</span><span>STATUS</span></div>
+        <sc-for list="{{ routeRows }}" as="r" hint-placeholder-count="10"><div style="display:grid;grid-template-columns:150px repeat(4,minmax(0,1fr)) 90px 110px;gap:10px;align-items:center;padding:6px 16px;border-bottom:1px solid {{ t.line }};background:{{ r.bg }}"><span style="font-weight:{{ r.fw }}">{{ r.name }}</span><sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="4"><div style="display:flex;align-items:center;gap:8px;min-width:0"><dc-import name="creature-icon" species="{{ c.sp }}" size="mini" state="{{ c.state }}" light="{{ light }}" hint-size="24px,18px"></dc-import><span style="font-size:12px;color:{{ c.fg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.txt }}</span></div></sc-for><span style="font:500 12px 'IBM Plex Mono',monospace;color:{{ t.mut }}">{{ r.group }}</span><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:{{ r.sBg }};color:{{ r.sFg }};justify-self:start">{{ r.status }}</span></div></sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isTeam }}" hint-placeholder-val="{{ false }}">
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;flex:1;min-height:0">
+        <sc-for list="{{ teams }}" as="p" hint-placeholder-count="4">
+          <div style="border-radius:10px;background:{{ t.card }};border:1px solid {{ t.line }};padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0">
+            <div style="display:flex;align-items:center;gap:10px"><span style="width:30px;height:30px;border-radius:50%;background:{{ p.c }};color:{{ t.avFg }};display:grid;place-items:center;font-weight:700">{{ p.i }}</span><div style="display:flex;flex-direction:column;min-width:0"><span style="font-weight:600">{{ p.n }}</span><span style="font-size:12px;color:{{ t.mut2 }}">{{ p.game }} · {{ p.loc }}</span></div></div>
+            <span style="font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }};letter-spacing:.08em">TEAM</span>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+              <sc-for list="{{ p.team }}" as="m" hint-placeholder-count="6"><div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 6px;border-radius:8px;background:{{ t.sub }}"><dc-import name="creature-icon" species="{{ m.sp }}" size="sprite" state="{{ m.state }}" light="{{ light }}" hint-size="68px,56px"></dc-import><span style="font-size:12px;font-weight:600">{{ m.nick }}</span><span style="font:400 11px 'IBM Plex Mono',monospace;color:{{ t.mut2 }}">{{ m.lv }}</span><div style="width:80%;height:4px;border-radius:2px;background:{{ t.track }}"><div style="height:100%;width:{{ m.w }};background:{{ m.hc }};border-radius:2px"></div></div></div></sc-for>
+            </div>
+            <div style="display:flex;align-items:center"><span style="font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }};letter-spacing:.08em">BOX · {{ p.boxN }}</span></div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px"><sc-for list="{{ p.box }}" as="b" hint-placeholder-count="4"><dc-import name="creature-icon" species="{{ b }}" light="{{ light }}" hint-size="40px,30px"></dc-import></sc-for></div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isGrave }}" hint-placeholder-val="{{ false }}">
+      <div style="border-radius:10px;border:1px solid {{ t.line }};background:{{ t.card }};overflow:hidden">
+        <div style="display:grid;grid-template-columns:40px 150px 90px 110px minmax(0,1fr) 90px 80px 70px;gap:12px;padding:9px 16px;font:500 11px 'IBM Plex Mono',monospace;color:{{ t.mut3 }};letter-spacing:.06em;border-bottom:1px solid {{ t.line }}"><span></span><span>CREATURE</span><span>OWNER</span><span>ROUTE</span><span>CAUSE</span><span>WHEN</span><span>LINK</span><span></span></div>
+        <sc-for list="{{ grave }}" as="g" hint-placeholder-count="7"><div style="display:grid;grid-template-columns:40px 150px 90px 110px minmax(0,1fr) 90px 80px 70px;gap:12px;align-items:center;padding:8px 16px;border-bottom:1px solid {{ t.line }}"><dc-import name="creature-icon" species="{{ g.sp }}" state="dead" light="{{ light }}" hint-size="40px,30px"></dc-import><div style="display:flex;flex-direction:column"><span style="font-weight:600">{{ g.nick }}</span><span style="font-size:11px;color:{{ t.mut2 }}">{{ g.sp }} · Lv {{ g.lv }}</span></div><span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:{{ g.c }}"></span>{{ g.who }}</span><span>{{ g.route }}</span><span style="color:{{ g.causeFg }}">{{ g.cause }}</span><span style="font:400 12px 'IBM Plex Mono',monospace;color:{{ t.mut2 }}">{{ g.when }}</span><span style="font:500 12px 'IBM Plex Mono',monospace;color:{{ t.mut }}">{{ g.group }}</span><span style="font-size:12px;color:{{ t.mut }};text-decoration:underline">Undo…</span></div></sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isLog }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:10px"><div style="display:flex;gap:2px;padding:3px;border-radius:7px;background:{{ t.segBg }};border:1px solid {{ t.line2 }};font-size:12px"><span style="padding:4px 10px;border-radius:5px;background:{{ t.segOn }};font-weight:500">All</span><span style="padding:4px 10px;color:{{ t.mut }}">Automatic</span><span style="padding:4px 10px;color:{{ t.mut }}">Manual · 6</span></div><span style="height:30px;padding:0 10px;border-radius:6px;background:{{ t.field }};border:1px solid {{ t.line2 }};display:flex;align-items:center;font-size:12px">All players ▾</span><span style="margin-left:auto;font-size:12px;color:{{ t.mut }}">214 events · Export</span></div>
+      <div style="border-radius:10px;border:1px solid {{ t.line }};background:{{ t.card }};overflow:hidden">
+        <sc-for list="{{ log }}" as="e" hint-placeholder-count="10"><div style="display:grid;grid-template-columns:110px 24px minmax(0,1fr) 90px 200px;gap:12px;align-items:center;padding:9px 16px;border-bottom:1px solid {{ t.line }}"><span style="font:400 12px 'IBM Plex Mono',monospace;color:{{ t.mut2 }}">{{ e.t }}</span><span style="width:20px;height:20px;border-radius:50%;background:{{ e.c }};color:{{ t.avFg }};display:grid;place-items:center;font-size:10px;font-weight:700">{{ e.i }}</span><span>{{ e.m }}</span><span style="justify-self:start;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:{{ e.tagBg }};color:{{ e.tagFg }}">{{ e.tag }}</span><span style="font-size:12px;color:{{ t.mut2 }}">{{ e.src }}</span></div></sc-for>
+      </div>
+    </sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;tab&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;map&quot;,&quot;routes&quot;,&quot;team&quot;,&quot;grave&quot;,&quot;log&quot;],&quot;default&quot;:&quot;map&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;shell&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;player&quot;,&quot;hub&quot;],&quot;default&quot;:&quot;player&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props, light = p.theme === 'light', tab = p.tab ?? 'map', hub = p.shell === 'hub';
+    const t = light ? { bg: '#f6f5f2', side: '#efeee9', sub: '#f6f5f2', card: '#ffffff', line: '#e3e1dc', line2: '#d9d7d1', text: '#1b1b1d', mut: '#55544f', mut2: '#6b6a66', mut3: '#8a8984', chip: '#e9e8e4', accentText: '#1a7f96', accentBg: '#ddf1f6', btnLine: '#cfcdc7', segBg: '#efeee9', segOn: '#ffffff', field: '#ffffff', track: '#e3e1dc', avFg: '#ffffff', sel: '#ffffff', okBg: '#e2f3e8', ok: '#2f7d4f', danger: '#b5402f', mutBg: '#e9e8e4', hpOk: '#3f9e63', hpMid: '#c48a1a', hpLow: '#b5402f', rowSel: '#f2f9fb' }
+      : { bg: '#121315', side: '#0e0f10', sub: '#121315', card: '#16171a', line: '#232428', line2: '#2c2d32', text: '#ecebe7', mut: '#a3a3a8', mut2: '#8e8e94', mut3: '#7d7d83', chip: '#1f2024', accentText: '#3cbfd8', accentBg: '#15262b', btnLine: '#3a3b40', segBg: '#1a1b1e', segOn: '#2c2d32', field: '#1a1b1e', track: '#26272b', avFg: '#121315', sel: '#1f2024', okBg: '#17291f', ok: '#6fd39a', danger: '#ef8a78', mutBg: '#232428', hpOk: '#6fd39a', hpMid: '#e5b45a', hpLow: '#ef8a78', rowSel: '#15262b' };
+    const C = light ? { Max: '#2f5fd0', Lena: '#b8327a', Jonas: '#4d7a14', Sam: '#6a4fc4' } : { Max: '#6f9cff', Lena: '#f07ab8', Jonas: '#a6d65a', Sam: '#b39cf5' };
+    const names = ['Max', 'Lena', 'Jonas', 'Sam'], loc = { Max: 'Route 104', Lena: 'Route 104', Jonas: 'Route 110', Sam: 'Ash Peak' };
+    const navP = [['Library', 0], ['Runs', 1], ['Emulation', 0], ['Controllers', 0], ['Settings', 0]];
+    const navH = ['Library', 'Saves', 'Systems & Cores', 'Clients', 'Users', 'Plugins', 'Runs', 'Settings'].map(l => [l, 0]);
+    const nav = (hub ? navH : navP).map(([l, ic]) => { const on = l === 'Runs'; return { l, icon: !!ic, pad: ic ? '7px 10px 7px 22px' : '9px 10px', bg: on ? t.sel : 'transparent', ring: on && light ? '0 0 0 1px #e3e1dc' : 'none', fw: on ? 500 : 400, fg: on ? t.text : t.mut }; });
+    const tabs = [['map', 'Map', ''], ['routes', 'Routes', '12'], ['team', 'Team & box', ''], ['grave', 'Graveyard', '7'], ['log', 'Event log', '214']].map(([k, l, n]) => ({ l, n, fg: k === tab ? t.text : t.mut, fw: k === tab ? 600 : 400, bar: k === tab ? 'inset 0 -2px 0 #3cbfd8' : 'none' }));
+    const R = [
+      ['Route 101', 'Group 1', { Max: ['Emberkit', 'Cinder'], Lena: ['Brinecrab', 'Pinch'], Jonas: ['Pebblor', 'Pebs'], Sam: ['Fernfox', 'Fen'] }, 'done'],
+      ['Route 102', 'Group 2', { Max: ['Fernfox', '†', 'dead'], Lena: ['Brinecrab', '†', 'dead'], Jonas: ['Duskowl', '†', 'dead'], Sam: ['Mossling', '†', 'dead'] }, 'dead'],
+      ['Route 103', 'Group 3', { Max: ['Mossling', 'Sprig'], Lena: ['Tidepup', 'Splash'], Jonas: ['Voltwing', 'Volt'], Sam: ['Duskowl', 'Hoot'] }, 'done'],
+      ['Route 104', '—', { Max: null, Lena: ['Tidepup', 'Wave'], Jonas: null, Sam: ['Tidepup', 'missed', 'missed'] }, 'open', true],
+      ['Route 105', 'Group 4', { Max: ['Voltwing', 'Zap'], Lena: ['Glimmoth', 'Moth'], Jonas: ['Shellsprout', 'Shelly'], Sam: ['Frostkit', 'Ice'] }, 'done'],
+      ['Driftwood Town', '—', { Max: ['Glimmoth', 'Lumi · gift'], Lena: null, Jonas: null, Sam: null }, 'gift'],
+      ['Route 110', '—', { Max: null, Lena: null, Jonas: ['Voltwing', 'Volt II'], Sam: null }, 'open'],
+      ['Route 118', 'Group 5', { Max: ['Pebblor', 'Rocco'], Lena: ['Cinderhog', 'Ash'], Jonas: ['Mossling', 'Mo'], Sam: ['Pebblor', 'Rubble'] }, 'done'],
+      ['Route 121', 'no link', { Max: ['Frostkit', 'missed', 'missed'], Lena: ['Shellsprout', 'Sprout'], Jonas: ['Emberkit', 'Ash'], Sam: ['Frostkit', 'Flake'] }, 'broken'],
+      ['Route 112', '—', { Max: null, Lena: null, Jonas: null, Sam: null }, 'open']
+    ];
+    const S = { done: ['Linked', t.okBg, t.ok], dead: ['Group dead', t.mutBg, t.mut], open: ['Open', t.accentBg, t.accentText], gift: ['Gift · no link', t.mutBg, t.mut], broken: ['Broken · missed', t.mutBg, t.mut] };
+    const routeRows = R.map(([name, group, c, st, sel]) => ({ name, group, bg: sel ? t.rowSel : 'transparent', fw: sel ? 600 : 400, status: S[st][0], sBg: S[st][1], sFg: S[st][2],
+      cells: names.map(n => { const v = c[n]; if (!v) return { sp: 'Mossling', state: 'empty', txt: 'open', fg: t.mut3 }; const state = v[2] || 'alive'; return { sp: v[0], state, txt: state === 'dead' ? v[0] + ' · dead' : state === 'missed' ? 'missed' : v[1], fg: state === 'alive' ? t.text : t.mut2 }; }) }));
+    const hp = v => v > .5 ? t.hpOk : v > .2 ? t.hpMid : t.hpLow;
+    const mk = (arr) => arr.map(([nick, sp, lv, v]) => ({ nick, sp, lv: 'Lv ' + lv, w: Math.round(v * 100) + '%', hc: hp(v), state: 'alive' }));
+    const teams = [
+      ['Max', 'Ember', mk([['Sprig', 'Mossling', 18, .82], ['Cinder', 'Emberkit', 17, .54], ['Zap', 'Voltwing', 16, .18], ['Lumi', 'Glimmoth', 15, 1], ['Rocco', 'Pebblor', 16, .66]]), ['Fernfox', 'Tidepup', 'Duskowl'], 3],
+      ['Lena', 'Tide', mk([['Splash', 'Tidepup', 18, .9], ['Pinch', 'Brinecrab', 17, .4], ['Moth', 'Glimmoth', 16, .7], ['Ash', 'Cinderhog', 16, .3], ['Wave', 'Tidepup', 12, 1]]), ['Frostkit', 'Mossling'], 2],
+      ['Jonas', 'Ember', mk([['Volt', 'Voltwing', 19, 1], ['Pebs', 'Pebblor', 18, .7], ['Shelly', 'Shellsprout', 17, .4], ['Mo', 'Mossling', 17, .15]]), ['Emberkit', 'Glimmoth', 'Tidepup', 'Fernfox'], 4],
+      ['Sam', 'Tide', mk([['Hoot', 'Duskowl', 18, .6], ['Fen', 'Fernfox', 17, .85], ['Ice', 'Frostkit', 16, .5], ['Rubble', 'Pebblor', 16, .25], ['Flake', 'Frostkit', 15, 1]]), ['Brinecrab'], 1]
+    ].map(([n, g, team, box, boxN]) => ({ n, i: n[0], c: C[n], game: g, loc: loc[n], team, box, boxN }));
+    const grave = [
+      ['Ferny', 'Fernfox', 14, 'Max', 'Route 102', 'fainted to Gym Leader Brine', '22:12', '2', true],
+      ['Pinch II', 'Brinecrab', 15, 'Lena', 'Route 102', 'linked partner died', '22:12', '2'],
+      ['Dusk', 'Duskowl', 14, 'Jonas', 'Route 102', 'linked partner died', '22:12', '2'],
+      ['Moss', 'Mossling', 13, 'Sam', 'Route 102', 'linked partner died', '22:12', '2'],
+      ['Ash', 'Emberkit', 12, 'Jonas', 'Route 116', 'fainted to wild Cinderhog · crit', 'Sat 21:40', '—', true],
+      ['Ferny', 'Fernfox', 11, 'Jonas', 'Route 117', 'fainted to trainer Kai', 'Sat 20:05', '—', true],
+      ['Tide', 'Tidepup', 9, 'Max', 'Route 106', 'fainted · undone, then fainted again', 'Fri 23:02', '—', true]
+    ].map(([nick, sp, lv, who, route, cause, when, group, own]) => ({ nick, sp, lv, who, c: C[who], route, cause, when, group, causeFg: own ? t.text : t.mut }));
+    const tag = (m) => m ? { tag: 'manual', tagBg: light ? '#f7ecd6' : '#2a2414', tagFg: light ? '#8a5a00' : '#e5b45a' } : { tag: 'automatic', tagBg: t.mutBg, tagFg: t.mut };
+    const log = [
+      ['today 22:41', 'Lena', 'Lena caught Tidepup “Wave” on Route 104', 0, 'Lena’s Player'],
+      ['today 22:39', 'Jonas', 'Jonas caught Voltwing “Volt II” on Route 110', 0, 'Jonas’s Player'],
+      ['today 22:31', 'Sam', 'Sam marked Route 104 as missed', 1, 'by Sam · seen by all'],
+      ['today 22:12', 'Max', 'Fernfox “Ferny” fainted to Gym Leader Brine → group 2 died', 0, 'Max’s Player'],
+      ['today 21:58', 'Max', 'Undo death of link group 3 (Sprig + 3 linked) · reason: emulator crash', 1, 'by Max · seen by all'],
+      ['today 21:57', 'Max', 'Mossling “Sprig” fainted → link group 3 died', 0, 'Max’s Player'],
+      ['today 21:44', 'Lena', 'Encounter didn’t count: Glimmoth (dupe)', 1, 'by Lena'],
+      ['today 21:40', 'Jonas', 'Jonas moved Mossling “Mo” to link group 5', 1, 'by Jonas · Lena approved'],
+      ['today 21:02', 'Jonas', 'Jonas joined the run', 0, 'Hub'],
+      ['Sat 21:40', 'Jonas', 'Emberkit “Ash” fainted on Route 116', 0, 'Jonas’s Player']
+    ].map(([tt, w, m, man, src]) => ({ t: tt, i: w[0], c: C[w], m, src, ...tag(man) }));
+    return {
+      t, light, theme: light ? 'light' : 'dark', product: hub ? 'hub' : 'player', appName: hub ? 'FrameBeam Hub' : 'FrameBeam Player', markTone: light ? 'color-light' : undefined, nav, tabs,
+      players: names.map(n => ({ i: n[0], c: C[n], loc: loc[n], up: n.toUpperCase() })),
+      isMap: tab === 'map', isRoutes: tab === 'routes', isTeam: tab === 'team', isGrave: tab === 'grave', isLog: tab === 'log',
+      routeRows, teams, grave, log
+    };
+  }
+}
+</script>
+</body>
+</html>

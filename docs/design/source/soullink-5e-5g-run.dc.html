@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#d9d8d4;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#1a7f96;text-decoration:none}a:hover{color:#0f5a6b;text-decoration:underline}
+</style>
+</helmet>
+
+<section style="padding:80px;display:flex;flex-direction:column;gap:40px">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:1440px">
+    <div style="padding:10px 14px;border-radius:8px;background:#fff7e0;border:1px solid #ead6a8;font-size:14px;color:#6b4600;max-width:1100px">Round 2 (11.10.2026): colors, versions and names are fixed here; artboards with layout changes (3DS screens, dialogs, sheet) are superseded by their <b>-2</b> versions in <a href="Plugins Round 2.dc.html">Plugins Round 2</a>.</div>
+    <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em">TURN 6 · SOULLINK &amp; NUZLOCKE · PART 2 OF 2 · RUN SCREEN, HUB BOARD, STREAM VIEW</div>
+    <div style="font-size:32px;font-weight:600;color:#1b1b1d">One run, five views: map, routes, teams, graveyard, log</div>
+    <div style="font-size:15px;color:#3a3936;line-height:1.55;max-width:1100px">Player sidebar → Runs → Ember &amp; Tide. The same screen renders on the Hub (5gh) inside the run detail slot from <a href="FrameBeam Plugins 4i-4j Sheet.dc.html#4jh">4jh</a>. Back to <a href="SoulLink 5a-5i.dc.html">5a–5i</a> · <a href="#5-handoff">Handoff</a>.</div>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5e · RUN SCREEN</div>
+  <div style="display:flex;flex-wrap:wrap;gap:64px;align-items:flex-start">
+    <sc-for list="{{ screens }}" as="s" hint-placeholder-count="6">
+      <div id="{{ s.id }}" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">{{ s.id }}</span><span style="font-size:15px;color:#3a3936">{{ s.cap }}</span></div>
+        <div data-screen-label="{{ s.label }}"><dc-import name="run-screen" tab="{{ s.tab }}" theme="{{ s.theme }}" shell="{{ s.shell }}" hint-size="1440px,900px"></dc-import></div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5gs · STREAM VIEW FOR OBS · TRANSPARENT BACKGROUND (CHECKERBOARD = TRANSPARENT)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:64px;align-items:flex-start">
+    <div id="5gs" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5gs</span><span style="font-size:15px;color:#3a3936">1920 × 1080 · teams in a row on top, deaths + last events at the bottom · game capture shows through</span></div>
+      <div data-screen-label="5gs Stream 1920" style="width:1920px;height:1080px;position:relative;overflow:hidden;border-radius:10px;background-color:#bdbcb8;background-image:linear-gradient(45deg,#a9a8a4 25%,transparent 25%,transparent 75%,#a9a8a4 75%),linear-gradient(45deg,#a9a8a4 25%,transparent 25%,transparent 75%,#a9a8a4 75%);background-size:32px 32px;background-position:0 0,16px 16px;font-family:'IBM Plex Sans',sans-serif;color:#ecebe7">
+        <div style="position:absolute;top:24px;left:24px;right:24px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px">
+          <sc-for list="{{ stream }}" as="p" hint-placeholder-count="4">
+            <div style="padding:14px 16px;border-radius:12px;background:rgba(12,13,14,.86);display:flex;flex-direction:column;gap:10px;box-shadow:inset 0 3px 0 {{ p.c }}">
+              <div style="display:flex;align-items:center;gap:10px"><span style="width:30px;height:30px;border-radius:50%;background:{{ p.c }};color:#121315;display:grid;place-items:center;font-weight:700;font-size:15px">{{ p.i }}</span><span style="font-size:20px;font-weight:600">{{ p.n }}</span><span style="margin-left:auto;font-size:16px;color:#c9c8c4">{{ p.loc }}</span></div>
+              <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px"><sc-for list="{{ p.team }}" as="m" hint-placeholder-count="6"><div style="display:flex;flex-direction:column;align-items:center;gap:4px"><dc-import name="creature-icon" species="{{ m.sp }}" size="sprite" state="{{ m.state }}" hint-size="68px,56px"></dc-import><div style="width:56px;height:5px;border-radius:3px;background:#26272b"><div style="height:100%;width:{{ m.w }};background:{{ m.hc }};border-radius:3px"></div></div></div></sc-for></div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="position:absolute;left:24px;bottom:24px;display:flex;gap:16px;align-items:stretch">
+          <div style="padding:14px 20px;border-radius:12px;background:rgba(12,13,14,.86);display:flex;flex-direction:column;justify-content:center;gap:2px"><span style="font:500 13px 'IBM Plex Mono',monospace;color:#8e8e94;letter-spacing:.08em">DEATHS</span><span style="font:600 44px 'IBM Plex Mono',monospace;line-height:1">7</span></div>
+          <div style="width:760px;padding:14px 18px;border-radius:12px;background:rgba(12,13,14,.86);display:flex;flex-direction:column;gap:8px"><span style="font:500 13px 'IBM Plex Mono',monospace;color:#8e8e94;letter-spacing:.08em">LAST EVENTS</span><sc-for list="{{ streamLog }}" as="e" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:10px;font-size:18px"><span style="width:10px;height:10px;border-radius:50%;background:{{ e.c }}"></span><span>{{ e.m }}</span><span style="margin-left:auto;font:400 14px 'IBM Plex Mono',monospace;color:#8e8e94">{{ e.t }}</span></div></sc-for></div>
+        </div>
+        <div style="position:absolute;right:24px;bottom:24px;padding:10px 14px;border-radius:10px;background:rgba(12,13,14,.86);display:flex;align-items:center;gap:10px;font-size:16px"><span style="font-weight:600">Ember &amp; Tide</span><span style="color:#8e8e94">SoulLink · 4 badges</span></div>
+      </div>
+    </div>
+    <div id="5gs-narrow" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5gs · 480</span><span style="font-size:15px;color:#3a3936">480 × 1080 sidebar · players stacked</span></div>
+      <div data-screen-label="5gs Stream 480" style="width:480px;height:1080px;position:relative;overflow:hidden;border-radius:10px;background-color:#bdbcb8;background-image:linear-gradient(45deg,#a9a8a4 25%,transparent 25%,transparent 75%,#a9a8a4 75%),linear-gradient(45deg,#a9a8a4 25%,transparent 25%,transparent 75%,#a9a8a4 75%);background-size:32px 32px;background-position:0 0,16px 16px;font-family:'IBM Plex Sans',sans-serif;color:#ecebe7;padding:20px;box-sizing:border-box;display:flex;flex-direction:column;gap:12px">
+        <div style="padding:12px 16px;border-radius:12px;background:rgba(12,13,14,.86);display:flex;align-items:center;gap:12px"><div style="display:flex;flex-direction:column"><span style="font-size:18px;font-weight:600">Ember &amp; Tide</span><span style="font-size:14px;color:#8e8e94">SoulLink · 4 badges</span></div><div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end"><span style="font:500 11px 'IBM Plex Mono',monospace;color:#8e8e94;letter-spacing:.08em">DEATHS</span><span style="font:600 32px 'IBM Plex Mono',monospace;line-height:1">7</span></div></div>
+        <sc-for list="{{ stream }}" as="p" hint-placeholder-count="4">
+          <div style="padding:12px 14px;border-radius:12px;background:rgba(12,13,14,.86);display:flex;flex-direction:column;gap:8px;box-shadow:inset 3px 0 0 {{ p.c }}">
+            <div style="display:flex;align-items:center;gap:8px"><span style="width:24px;height:24px;border-radius:50%;background:{{ p.c }};color:#121315;display:grid;place-items:center;font-weight:700;font-size:12px">{{ p.i }}</span><span style="font-size:17px;font-weight:600">{{ p.n }}</span><span style="margin-left:auto;font-size:14px;color:#c9c8c4">{{ p.loc }}</span></div>
+            <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px"><sc-for list="{{ p.team }}" as="m" hint-placeholder-count="6"><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><dc-import name="creature-icon" species="{{ m.sp }}" state="{{ m.state }}" hint-size="40px,30px"></dc-import><div style="width:40px;height:4px;border-radius:2px;background:#26272b"><div style="height:100%;width:{{ m.w }};background:{{ m.hc }};border-radius:2px"></div></div></div></sc-for></div>
+          </div>
+        </sc-for>
+        <div style="margin-top:auto;padding:12px 14px;border-radius:12px;background:rgba(12,13,14,.86);display:flex;flex-direction:column;gap:8px"><span style="font:500 11px 'IBM Plex Mono',monospace;color:#8e8e94;letter-spacing:.08em">LAST EVENTS</span><sc-for list="{{ streamLog }}" as="e" hint-placeholder-count="3"><div style="display:flex;align-items:flex-start;gap:8px;font-size:15px;line-height:1.35"><span style="width:8px;height:8px;border-radius:50%;background:{{ e.c }};margin-top:6px;flex:none"></span><span>{{ e.m }}</span></div></sc-for></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="5-handoff" style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">HANDOFF · SOULLINK &amp; NUZLOCKE · FRAMEBEAM-PLUGIN-SOULLINK REPO</div>
+  <div style="display:grid;grid-template-columns:repeat(3,460px);gap:24px;align-items:start;color:#1b1b1d;font-size:13px;line-height:1.55">
+    <sc-for list="{{ handoff }}" as="h" hint-placeholder-count="8">
+      <div style="padding:22px 24px;border-radius:10px;background:#fff;border:1px solid #e3e1dc;display:flex;flex-direction:column;gap:10px"><div style="display:flex;gap:10px;align-items:center"><span style="font:500 12px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:3px 7px;border-radius:4px">{{ h.id }}</span><b style="font-size:15px">{{ h.title }}</b></div>
+        <div><b>Purpose</b> · {{ h.purpose }}</div><div><b>States</b> · {{ h.states }}</div><div><b>Blocks used</b> · {{ h.blocks }}</div><div style="color:#55544f"><b style="color:#1b1b1d">Open</b> · {{ h.open }}</div></div>
+    </sc-for>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const C = { Max: '#6f9cff', Lena: '#f07ab8', Jonas: '#a6d65a', Sam: '#b39cf5' };
+    const hp = v => v > .5 ? '#6fd39a' : v > .2 ? '#e5b45a' : '#ef8a78';
+    const tm = (a) => a.map(([sp, v, st]) => ({ sp, state: st || 'alive', w: Math.round(v * 100) + '%', hc: hp(v) }));
+    return {
+      screens: [
+        { id: '5e-map', cap: 'Map · all players · Route 104 popover · 1440 × 900', tab: 'map', theme: 'dark', shell: 'player' },
+        { id: '5e-map-light', cap: 'Map · light theme', tab: 'map', theme: 'light', shell: 'player' },
+        { id: '5e-routes', cap: 'Routes table · routes × players · link group per row · current route highlighted', tab: 'routes', theme: 'dark', shell: 'player' },
+        { id: '5e-team', cap: 'Team & box per player', tab: 'team', theme: 'dark', shell: 'player' },
+        { id: '5e-grave', cap: 'Graveyard with cause · linked deaths grouped by time', tab: 'grave', theme: 'dark', shell: 'player' },
+        { id: '5e-log', cap: 'Event log · automatic vs manual · who changed what', tab: 'log', theme: 'dark', shell: 'player' },
+        { id: '5gh', cap: 'Hub web run board · same content for people without the Player open · light', tab: 'map', theme: 'light', shell: 'hub' }
+      ].map(s => ({ ...s, label: s.id + ' ' + s.cap.split(' · ')[0] })),
+      stream: [
+        ['Max', 'Route 104', tm([['Mossling', .82], ['Emberkit', .54], ['Voltwing', .18], ['Glimmoth', 1], ['Pebblor', .66], ['Mossling', 0, 'empty']])],
+        ['Lena', 'Route 104', tm([['Tidepup', .9], ['Brinecrab', .4], ['Glimmoth', .7], ['Cinderhog', .3], ['Tidepup', 1], ['Mossling', 0, 'empty']])],
+        ['Jonas', 'Route 110', tm([['Voltwing', 1], ['Pebblor', .7], ['Shellsprout', .4], ['Mossling', .15], ['Emberkit', 0, 'dead'], ['Fernfox', 0, 'dead']])],
+        ['Sam', 'Ash Peak', tm([['Duskowl', .6], ['Fernfox', .85], ['Frostkit', .5], ['Pebblor', .25], ['Frostkit', 1], ['Mossling', 0, 'empty']])]
+      ].map(([n, loc, team]) => ({ n, i: n[0], c: C[n], loc, team })),
+      streamLog: [['Lena', 'Lena caught Tidepup on Route 104', '22:41'], ['Jonas', 'Jonas caught Voltwing on Route 110', '22:39'], ['Max', 'Ferny fainted to Gym Leader Brine · link group 2 lost', '22:12']].map(([w, m, t]) => ({ c: C[w], m, t })),
+      handoff: [
+        { id: '5a / 5ah', title: 'Start a run', purpose: 'Create a run with mode, players, games, rules.', states: '5 steps · invite joined / pending · twin versions · start with pending players (warning).', blocks: 'dialog, list with selection, chip, toggle rows, text field, select, platform invite (4j).', open: 'Can rules change after the start by vote of all players, or never?' },
+        { id: '5b', title: 'In-game panel tab', purpose: 'Everything needed while playing, without leaving the game.', states: 'location: no encounter / encounter now / caught / missed / not a route · encounter hint with “Doesn’t count” · 1440 · 1280 (2 partner icons) · light · paused by error.', blocks: 'section header, card, chip, sprite icons, HP bar, list, button quiet.', open: 'Should tapping a team row open 5f actions inline, or always go to the run screen?' },
+        { id: '5c / 5d', title: 'HUD widget · tile strip', purpose: 'Glanceable route status; a friend’s run on their Multiview tile.', states: 'HUD compact / expanded / encounter now / death flash · strip collapsed / expanded · tap → panel detail on the remote tile.', blocks: 'HUD slot (4e), tile strip slot (4e), list, HP bar.', open: 'Resolved: no red flash; the widget expands for 3 s, off with Reduce motion.' },
+        { id: '5e', title: 'Run screen', purpose: 'The whole run: map, routes matrix, teams, graveyard, log.', states: 'map (dark, light, filters, popover) · routes (all / open / complete, sort) · team & box · graveyard · log (all / automatic / manual, per player).', blocks: 'tabs, map view, table with selection, sprite, HP bar, stat row, chip.', open: 'The map image comes from the game file: what if a game has no region map? Drawn fallback: Routes tab first, Map tab hidden.' },
+        { id: '5f', title: 'Manual correction', purpose: 'Fix wrong detection without breaking trust.', states: 'doesn’t count · undo death (with reason) · change link group · add creature by hand · mark route missed.', blocks: 'anchored popover, confirmation dialog (danger for undo death), segments, select, text field.', open: 'Do some corrections need another player’s approval (drawn once in the log: “Lena approved”)?' },
+        { id: '5gh / 5gs', title: 'Hub board · stream view', purpose: 'Follow a run without the Player; show it on stream.', states: 'Hub board = 5e in Hub shell, light · stream 1920 × 1080 and 480 × 1080, transparent, no interaction.', blocks: 'same as 5e; stream uses larger type (16–44) and no chrome.', open: 'Stream URL: public read-only link with token, or Hub login? Drawn: token link, revocable in run settings.' },
+        { id: '5h / 5i', title: 'Notices · settings', purpose: 'Tell players about deaths and catches; configure defaults.', states: 'important (death, linked) · info (catch) · hint (new route) · settings from schema with SettingsRow.', blocks: 'toast (4g), SettingsRow, form from schema.', open: 'Should a linked death interrupt with a toast in fullscreen, or only the HUD flash?' },
+        { id: 'Colors', title: 'Player colors vs status colors', purpose: 'Avatar colors never carry status.', states: 'Max #6f9cff / #2f5fd0 · Lena #f07ab8 / #b8327a · Jonas #a6d65a / #4d7a14 · Sam #b39cf5 / #6a4fc4 (dark / light).', blocks: 'Death is grey + ✕, never red; red stays for danger actions.', open: 'Resolved in round 2: Max blue, Lena pink, Jonas lime, Sam violet; none is cyan or near danger red.' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

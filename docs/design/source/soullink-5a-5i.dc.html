@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#d9d8d4;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#1a7f96;text-decoration:none}a:hover{color:#0f5a6b;text-decoration:underline}
+</style>
+</helmet>
+
+<section style="padding:80px;display:flex;flex-direction:column;gap:40px">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:1440px">
+    <div style="padding:10px 14px;border-radius:8px;background:#fff7e0;border:1px solid #ead6a8;font-size:14px;color:#6b4600;max-width:1100px">Round 2 (11.10.2026): colors, versions and names are fixed here; artboards with layout changes (3DS screens, dialogs, sheet) are superseded by their <b>-2</b> versions in <a href="Plugins Round 2.dc.html">Plugins Round 2</a>.</div>
+    <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em">TURN 6 · SOULLINK &amp; NUZLOCKE · PART 1 OF 2 · FRAMEBEAM-PLUGIN-SOULLINK REPO</div>
+    <div style="font-size:32px;font-weight:600;color:#1b1b1d">Start a run, play with the run beside you, fix what detection got wrong</div>
+    <div style="font-size:15px;color:#3a3936;line-height:1.55;text-wrap:pretty;max-width:1100px">Built only from the platform blocks (<a href="FrameBeam Plugins 4i-4j Sheet.dc.html#4-sheet">component sheet</a>). Avatar colors: <b style="color:#2f5fd0">Max blue</b> · <b style="color:#b8327a">Lena pink</b> · <b style="color:#4d7a14">Jonas lime</b> · <b style="color:#6a4fc4">Sam violet</b>. Fictional game “Coral Saga: Ember / Tide”, region “Marisol”, placeholder creature icons. Run screen, Hub board and stream view: <a href="SoulLink 5e-5g Run.dc.html">5e–5g</a>.</div>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5a · START A RUN · MODE → PLAYERS → GAMES → RULES → SUMMARY</div>
+  <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+    <sc-for list="{{ wiz }}" as="w" hint-placeholder-count="5">
+      <div id="{{ w.id }}" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">{{ w.id }}</span><span style="font-size:15px;color:#3a3936">{{ w.cap }}</span></div>
+        <div data-screen-label="{{ w.label }}" style="width:960px;height:680px;border-radius:10px;background:#08090a;display:grid;place-items:center;box-shadow:0 30px 60px rgba(0,0,0,.25);color:#ecebe7;font-size:13px">
+          <div style="width:880px;height:600px;border-radius:12px;background:#16171a;border:1px solid #2c2d32;display:grid;grid-template-columns:200px minmax(0,1fr);overflow:hidden">
+            <div style="background:#121315;border-right:1px solid #232428;padding:22px 16px;display:flex;flex-direction:column;gap:4px">
+              <span style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em;padding:0 8px 10px">NEW RUN</span>
+              <sc-for list="{{ w.steps }}" as="s" hint-placeholder-count="5"><div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;background:{{ s.bg }}"><span style="width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:600 11px 'IBM Plex Mono',monospace;background:{{ s.dotBg }};color:{{ s.dotFg }};box-shadow:{{ s.dotRing }}">{{ s.mark }}</span><span style="color:{{ s.fg }};font-weight:{{ s.fw }}">{{ s.l }}</span></div></sc-for>
+              <div style="margin-top:auto;padding:0 8px;display:flex;align-items:center;gap:6px;font-size:11px;color:#7d7d83"><span style="width:14px;height:14px;border-radius:3px;background:#232428;font:600 6px/14px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span>SoulLink &amp; Nuzlocke</div>
+            </div>
+            <div style="padding:24px 28px;display:flex;flex-direction:column;gap:16px;min-width:0">
+              <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:20px;font-weight:600">{{ w.title }}</span><span style="color:#a3a3a8">{{ w.lead }}</span></div>
+
+              <sc-if value="{{ w.isMode }}" hint-placeholder-val="{{ false }}">
+                <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+                  <div style="padding:16px;border-radius:10px;background:#1a1b1e;border:1px solid #2c2d32;display:flex;flex-direction:column;gap:8px"><span style="width:18px;height:18px;border-radius:50%;border:2px solid #3a3b40;box-sizing:border-box"></span><span style="font-size:15px;font-weight:600">Nuzlocke</span><span style="color:#a3a3a8;line-height:1.5">Just you, or friends side by side without links. First encounter per route counts; fainted means dead.</span><span style="font-size:12px;color:#7d7d83">1–4 players</span></div>
+                  <div style="padding:16px;border-radius:10px;background:#15262b;border:1.5px solid #3cbfd8;display:flex;flex-direction:column;gap:8px"><span style="width:18px;height:18px;border-radius:50%;border:5px solid #3cbfd8;box-sizing:border-box"></span><span style="font-size:15px;font-weight:600">SoulLink</span><span style="color:#a9cdd6;line-height:1.5">Catches from the same route form a link group. If one dies, its partners die too.</span><span style="font-size:12px;color:#a9cdd6">2–4 players</span></div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;color:#8e8e94">Run name</span><div style="height:36px;border-radius:7px;background:#1a1b1e;border:1px solid #2c2d32;display:flex;align-items:center;padding:0 12px;font-size:14px">Ember &amp; Tide</div></div>
+              </sc-if>
+
+              <sc-if value="{{ w.isPlayers }}" hint-placeholder-val="{{ false }}">
+                <div style="height:36px;border-radius:7px;background:#1a1b1e;border:1.5px solid #3cbfd8;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 12px;color:#7d7d83">+ Invite a hub user…<span style="margin-left:auto;font-size:12px">3 of 3 invited</span></div>
+                <div style="display:flex;flex-direction:column;border-radius:9px;background:#1a1b1e;border:1px solid #26272b">
+                  <sc-for list="{{ invitees }}" as="p" hint-placeholder-count="4"><div style="display:grid;grid-template-columns:30px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid #26272b"><span style="width:30px;height:30px;border-radius:50%;background:{{ p.c }};color:#121315;display:grid;place-items:center;font-weight:700">{{ p.i }}</span><div style="display:flex;flex-direction:column"><span style="font-weight:600">{{ p.n }}</span><span style="font-size:12px;color:#8e8e94">{{ p.sub }}</span></div><span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:{{ p.sBg }};color:{{ p.sFg }}"><span style="width:6px;height:6px;border-radius:50%;background:{{ p.sFg }}"></span>{{ p.st }}</span><span style="font-size:12px;color:#a3a3a8;text-decoration:underline">{{ p.act }}</span></div></sc-for>
+                </div>
+                <span style="font-size:12px;color:#8e8e94">Invites work like Session invites. You can continue now; the run starts when everyone joined, or you start without pending players.</span>
+              </sc-if>
+
+              <sc-if value="{{ w.isGames }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;border-radius:9px;background:#1a1b1e;border:1px solid #26272b">
+                  <sc-for list="{{ gamesPer }}" as="p" hint-placeholder-count="4"><div style="display:grid;grid-template-columns:8px 70px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid #26272b"><span style="width:8px;height:8px;border-radius:50%;background:{{ p.c }}"></span><span style="font-weight:600">{{ p.n }}</span><div style="height:32px;border-radius:6px;background:#121315;border:1px solid #2c2d32;display:flex;align-items:center;gap:8px;padding:0 10px"><span style="font:400 10px 'IBM Plex Mono',monospace;color:#6f6f75">3DS</span>{{ p.game }}<span style="margin-left:auto;color:#7d7d83;font-size:11px">▾</span></div><span style="font-size:12px;color:{{ p.fg }}">{{ p.note }}</span></div></sc-for>
+                </div>
+                <span style="font-size:12px;color:#8e8e94">Only games that SoulLink &amp; Nuzlocke supports are listed. Twin versions can be mixed. Each player picks their own copy; pending players pick when they join.</span>
+              </sc-if>
+
+              <sc-if value="{{ w.isRules }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column">
+                  <sc-for list="{{ rules }}" as="r" hint-placeholder-count="8"><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;padding:8px 0;border-bottom:1px solid #232428"><div style="display:flex;flex-direction:column;gap:1px"><span>{{ r.l }}</span><span style="font-size:12px;color:#8e8e94">{{ r.d }}</span></div><div style="width:40px;height:22px;border-radius:11px;position:relative;background:{{ r.bg }}"><div style="position:absolute;top:3px;left:{{ r.k }};width:16px;height:16px;border-radius:50%;background:#ffffff"></div></div></div></sc-for>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ w.isSummary }}" hint-placeholder-val="{{ false }}">
+                <div style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px 14px;padding:14px 16px;border-radius:10px;background:#1a1b1e;border:1px solid #26272b">
+                  <span style="color:#8e8e94">Run</span><span style="font-weight:600">Ember &amp; Tide · SoulLink</span>
+                  <span style="color:#8e8e94">Players</span><div style="display:flex;flex-wrap:wrap;gap:6px"><sc-for list="{{ sumPlayers }}" as="p" hint-placeholder-count="4"><span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 9px 3px 6px;border-radius:999px;background:#232428"><span style="width:7px;height:7px;border-radius:50%;background:{{ p.c }}"></span>{{ p.n }} · {{ p.g }}</span></sc-for></div>
+                  <span style="color:#8e8e94">Rules</span><span style="color:#c9c8c4;line-height:1.5">First encounter only · Dupes clause · Shiny clause · Hordes count · Linked pairs differ in primary type · Only linked pairs in team · Nickname required · Level caps as hints</span>
+                  <span style="color:#8e8e94">Saves</span><span style="color:#c9c8c4">New slot “Run · Ember &amp; Tide” per player · your Main slot stays untouched</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:10px 12px;border-radius:8px;background:#2a2414;border:1px solid #4a3d1c;color:#e9d8b0;line-height:1.5"><span style="color:#e5b45a;font-weight:600">!</span><span>Sam hasn’t joined yet. Start now and Sam joins later from the invite, or wait.</span></div>
+              </sc-if>
+
+              <div style="margin-top:auto;display:flex;align-items:center;gap:8px;padding-top:14px;border-top:1px solid #232428"><span style="color:#a3a3a8">{{ w.back }}</span><span style="margin-left:auto;height:40px;padding:0 16px;border-radius:8px;border:1px solid #3a3b40;display:flex;align-items:center;font-size:14px">Cancel</span><span style="height:40px;padding:0 18px;border-radius:8px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-size:14px;font-weight:600">{{ w.next }}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+
+    <div id="5ah" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5ah</span><span style="font-size:15px;color:#3a3936">Hub web · same wizard as a page · Players step with invite state · 1440 × 900</span></div>
+      <div data-screen-label="5ah Hub start a run" style="width:1440px;height:900px;background:#f6f5f2;color:#1b1b1d;display:grid;grid-template-columns:232px minmax(0,1fr);overflow:hidden;border-radius:10px;box-shadow:0 30px 60px rgba(0,0,0,.25);font-size:13px">
+        <aside style="background:#efeee9;border-right:1px solid #e3e1dc;padding:24px 16px;display:flex;flex-direction:column;gap:28px">
+          <div style="display:flex;align-items:center;gap:10px;padding:0 8px"><dc-import name="framebeam-mark" concept="a" product="hub" tone="color-light" palette="signal" size="22" hint-size="22px,22px"></dc-import><div style="font-weight:600;font-size:16px">FrameBeam Hub</div></div>
+          <nav style="display:flex;flex-direction:column;gap:2px;font-size:14px"><sc-for list="{{ hubNav }}" as="n" hint-placeholder-count="8"><div style="padding:9px 10px;border-radius:6px;background:{{ n.bg }};box-shadow:{{ n.ring }};font-weight:{{ n.fw }};color:{{ n.fg }}">{{ n.l }}</div></sc-for></nav>
+          <div style="margin-top:auto;padding:0 8px;font:500 13px 'IBM Plex Sans',sans-serif">Max</div>
+        </aside>
+        <main style="padding:28px 48px;display:flex;flex-direction:column;gap:22px;min-width:0">
+          <div style="font-size:13px;color:#55544f">← Runs</div>
+          <header style="display:flex;flex-direction:column;gap:4px"><div style="font-size:26px;font-weight:600;letter-spacing:-.015em">New run</div><div style="color:#6b6a66">SoulLink &amp; Nuzlocke · runs created here appear on every member’s Player</div></header>
+          <div style="display:flex;gap:4px"><sc-for list="{{ hubSteps }}" as="s" hint-placeholder-count="5"><div style="flex:1;display:flex;flex-direction:column;gap:6px"><span style="height:4px;border-radius:2px;background:{{ s.bar }}"></span><span style="font-size:12px;color:{{ s.fg }};font-weight:{{ s.fw }}">{{ s.n }} · {{ s.l }}</span></div></sc-for></div>
+          <div style="max-width:760px;display:flex;flex-direction:column;gap:14px">
+            <span style="font-size:18px;font-weight:600">Who plays?</span>
+            <div style="height:38px;border-radius:7px;background:#fff;border:1.5px solid #3cbfd8;box-sizing:border-box;display:flex;align-items:center;padding:0 12px;color:#8a8984">+ Invite a hub user…</div>
+            <div style="border-radius:10px;background:#fff;border:1px solid #e3e1dc">
+              <sc-for list="{{ inviteesL }}" as="p" hint-placeholder-count="4"><div style="display:grid;grid-template-columns:32px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:12px 14px;border-bottom:1px solid #efeee9"><span style="width:32px;height:32px;border-radius:50%;background:{{ p.c }};color:#fff;display:grid;place-items:center;font-weight:700">{{ p.i }}</span><div style="display:flex;flex-direction:column"><span style="font-weight:600">{{ p.n }}</span><span style="font-size:12px;color:#6b6a66">{{ p.sub }}</span></div><span style="font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:{{ p.sBg }};color:{{ p.sFg }}">{{ p.st }}</span><span style="font-size:12px;color:#55544f;text-decoration:underline">{{ p.act }}</span></div></sc-for>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end"><span style="height:40px;padding:0 16px;border-radius:8px;border:1px solid #cfcdc7;display:flex;align-items:center;font-size:14px">Back</span><span style="height:40px;padding:0 18px;border-radius:8px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-size:14px;font-weight:600">Next · Games</span></div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5b · IN-GAME PANEL TAB · THE MAIN VIEW WHILE PLAYING</div>
+  <div style="display:flex;flex-wrap:wrap;gap:64px;align-items:flex-start">
+    <div id="5b" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5b</span><span style="font-size:15px;color:#3a3936">1440 · Route 104, no encounter yet · team with linked partners · partner strip</span></div>
+      <div data-screen-label="5b SoulLink panel 1440" style="width:1440px;height:900px;background:#0b0b0c;color:#ecebe7;display:grid;grid-template-rows:56px minmax(0,1fr);grid-template-columns:minmax(0,1fr) 340px;overflow:hidden;border-radius:10px;box-shadow:0 30px 60px rgba(0,0,0,.25)">
+        <div style="grid-column:1/3;position:relative;z-index:5"><dc-import name="game-header" mode="session" share="not" title="Coral Saga: Ember" hint-size="100%,56px"></dc-import></div>
+        <div style="position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:0"><div style="width:480px;height:360px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px);display:grid;place-items:center;font:400 12px 'IBM Plex Mono',monospace;color:#6f6f75">top DS screen · Route 104</div><div style="width:480px;height:360px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px)"></div>
+          <div style="position:absolute;left:16px;bottom:16px;display:flex;align-items:center;gap:8px;padding:6px 10px 6px 6px;border-radius:8px;background:rgba(17,18,20,.82);border:1px solid rgba(255,255,255,.08);font-size:12px"><span style="width:16px;height:16px;border-radius:4px;background:#232428;font:600 7px/16px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span><span style="font-weight:500">Route 104</span><span style="width:7px;height:7px;border-radius:50%;background:#3cbfd8"></span><span style="color:#a9cdd6">no encounter yet</span></div>
+        </div>
+        <div style="min-height:0;display:flex;flex-direction:column;background:#111214;border-left:1px solid #1e1f22">
+          <div style="display:flex;align-items:stretch;height:44px;padding:0 12px;gap:2px;border-bottom:1px solid #1e1f22;flex:none;font-size:13px"><span style="display:flex;align-items:center;padding:0 9px;color:#a3a3a8">Game</span><span style="display:flex;align-items:center;gap:6px;padding:0 9px;font-weight:500;box-shadow:inset 0 -2px 0 #3cbfd8"><span style="width:18px;height:18px;border-radius:5px;background:#232428;font:600 8px/18px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span>SoulLink</span><span style="display:flex;align-items:center;gap:6px;padding:0 9px;color:#a3a3a8"><span style="width:18px;height:18px;border-radius:5px;background:#232428;font:600 8px/18px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">IH</span>Items</span></div>
+          <div style="flex:1;min-height:0"><dc-import name="soullink-panel" style="height:100%" hint-size="340px,800px"></dc-import></div>
+        </div>
+      </div>
+    </div>
+    <div id="5b-1280" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5b · 1280</span><span style="font-size:15px;color:#3a3936">Panel 320 · encounter detected with “Doesn’t count” · two partner icons per row, the rest in a tooltip</span></div>
+      <div data-screen-label="5b SoulLink panel 1280" style="width:1280px;height:800px;background:#0b0b0c;color:#ecebe7;display:grid;grid-template-rows:56px minmax(0,1fr);grid-template-columns:minmax(0,1fr) 320px;overflow:hidden;border-radius:10px;box-shadow:0 30px 60px rgba(0,0,0,.25)">
+        <div style="grid-column:1/3;position:relative;z-index:5"><dc-import name="game-header" mode="session" share="not" title="Coral Saga: Ember" compact="{{ true }}" hint-size="100%,56px"></dc-import></div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:0"><div style="width:416px;height:312px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px);display:grid;place-items:center;font:400 12px 'IBM Plex Mono',monospace;color:#6f6f75">wild Tidepup appeared</div><div style="width:416px;height:312px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px)"></div></div>
+        <div style="min-height:0;display:flex;flex-direction:column;background:#111214;border-left:1px solid #1e1f22">
+          <div style="display:flex;align-items:stretch;height:44px;padding:0 10px;gap:2px;border-bottom:1px solid #1e1f22;flex:none;font-size:13px"><span style="display:flex;align-items:center;padding:0 8px;color:#a3a3a8">Game</span><span style="display:flex;align-items:center;gap:6px;padding:0 8px;font-weight:500;box-shadow:inset 0 -2px 0 #3cbfd8"><span style="width:18px;height:18px;border-radius:5px;background:#232428;font:600 8px/18px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span>SoulLink</span><span title="Items" style="display:flex;align-items:center;padding:0 8px"><span style="width:18px;height:18px;border-radius:5px;background:#232428;font:600 8px/18px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">IH</span></span></div>
+          <div style="flex:1;min-height:0"><dc-import name="soullink-panel" compact="{{ true }}" hint="{{ true }}" style="height:100%" hint-size="320px,700px"></dc-import></div>
+        </div>
+      </div>
+    </div>
+    <div id="5b-states" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5b · location</span><span style="font-size:15px;color:#3a3936">Location card states</span></div>
+      <div data-screen-label="5b location states" style="width:340px;padding:20px;box-sizing:border-box;border-radius:10px;background:#111214;color:#ecebe7;display:flex;flex-direction:column;gap:10px;font-size:13px;box-shadow:0 30px 60px rgba(0,0,0,.25)">
+        <sc-for list="{{ locStates }}" as="l" hint-placeholder-count="5"><div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:9px;background:#16171a;border:1px solid #232428"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:15px;font-weight:600">{{ l.place }}</span><span style="font-size:11px;color:#7d7d83">{{ l.note }}</span></div><span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;background:{{ l.bg }};color:{{ l.fg }}"><span style="width:6px;height:6px;border-radius:50%;background:{{ l.fg }}"></span>{{ l.s }}</span></div></sc-for>
+      </div>
+    </div>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5c · HUD WIDGET · 5d · MULTIVIEW TILE OVERLAY · 5h · NOTICES</div>
+  <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+    <div id="5c" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5c</span><span style="font-size:15px;color:#3a3936">Compact · expanded · encounter now · dead flash</span></div>
+      <div data-screen-label="5c HUD widget" style="width:560px;padding:28px;box-sizing:border-box;border-radius:10px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px);color:#ecebe7;display:flex;flex-direction:column;gap:22px;font-size:12px;box-shadow:0 30px 60px rgba(0,0,0,.25)">
+        <div style="display:flex;flex-direction:column;gap:6px"><span style="font:500 10px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">COMPACT</span><div style="display:flex;flex-wrap:wrap;gap:8px"><sc-for list="{{ hudCompact }}" as="h" hint-placeholder-count="4"><div style="display:inline-flex;align-items:center;gap:8px;padding:6px 10px 6px 6px;border-radius:8px;background:rgba(17,18,20,.82);border:1px solid rgba(255,255,255,.08)"><span style="width:16px;height:16px;border-radius:4px;background:#232428;font:600 7px/16px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span><span style="font-weight:500">{{ h.place }}</span><span style="width:7px;height:7px;border-radius:50%;background:{{ h.c }}"></span><span style="color:{{ h.fg }}">{{ h.s }}</span></div></sc-for></div></div>
+        <div style="display:flex;flex-direction:column;gap:6px"><span style="font:500 10px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">EXPANDED · CLICK OR CONTROLLER A</span>
+          <div style="display:inline-flex;align-self:flex-start;flex-direction:column;gap:6px;padding:7px 12px 9px 6px;border-radius:8px;background:rgba(17,18,20,.82);border:1px solid rgba(255,255,255,.08)">
+            <div style="display:flex;align-items:center;gap:8px"><span style="width:16px;height:16px;border-radius:4px;background:#232428;font:600 7px/16px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span><span style="font-weight:500">Route 104</span><span style="width:7px;height:7px;border-radius:50%;background:#3cbfd8"></span><span style="color:#a9cdd6">no encounter yet</span></div>
+            <div style="display:grid;grid-template-columns:8px 44px 24px auto;gap:4px 8px;align-items:center;padding-left:24px;font-size:11px"><span style="width:6px;height:6px;border-radius:50%;background:#f07ab8"></span><span>Lena</span><dc-import name="creature-icon" species="Tidepup" size="mini" hint-size="24px,18px"></dc-import><span style="color:#6fd39a">caught</span><span style="width:6px;height:6px;border-radius:50%;background:#a6d65a"></span><span>Jonas</span><span></span><span style="color:#8e8e94">open</span><span style="width:6px;height:6px;border-radius:50%;background:#b39cf5"></span><span>Sam</span><dc-import name="creature-icon" species="Tidepup" size="mini" state="missed" hint-size="24px,18px"></dc-import><span style="color:#8e8e94">missed</span></div>
+          </div>
+        </div>
+        <div style="font-size:12px;line-height:1.6;color:#c9c8c4">Dot colors: cyan open · green caught · grey missed / not a route. Player colors never mark status; red stays for danger. A death in your team expands the widget for 3 s (off with Reduce motion), then the toast (5h) carries the detail. Death is grey + ✕, never red.</div>
+      </div>
+    </div>
+
+    <div id="5d" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5d</span><span style="font-size:15px;color:#3a3936">Friend’s tile · strip (see <a href="FrameBeam Plugins 4e-4h.dc.html#4e-6">4e-6</a>) · tap → panel shows their run detail</span></div>
+      <div data-screen-label="5d Tile overlay detail" style="width:840px;height:620px;border-radius:10px;background:#0b0b0c;color:#ecebe7;display:grid;grid-template-columns:minmax(0,1fr) 340px;overflow:hidden;box-shadow:0 30px 60px rgba(0,0,0,.25);font-size:13px">
+        <div style="padding:16px;display:flex;align-items:center">
+          <div style="position:relative;width:100%;height:440px;border-radius:8px;background:#0f1011;outline:2px solid #ecebe7;outline-offset:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px"><div style="width:240px;height:180px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px)"></div><div style="width:240px;height:180px;background:repeating-linear-gradient(135deg,#17181a 0 10px,#1b1c1f 10px 20px)"></div><span style="position:absolute;top:10px;left:10px;font:500 11px 'IBM Plex Mono',monospace;width:20px;height:20px;border-radius:4px;background:#ecebe7;color:#121315;display:grid;place-items:center">3</span>
+            <div style="position:absolute;top:10px;left:38px;display:flex;align-items:center;gap:8px;height:20px;padding:0 8px 0 3px;border-radius:5px;background:rgba(17,18,20,.88);font-size:12px"><span style="width:14px;height:14px;border-radius:4px;background:#232428;font:600 6px/14px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span><span style="width:7px;height:7px;border-radius:50%;background:#a6d65a"></span>Route 110<span style="color:#7d7d83">·</span><span style="color:#a3a3a8">4 alive</span></div>
+            <div style="position:absolute;left:10px;bottom:10px;padding:4px 8px;border-radius:6px;background:rgba(17,18,20,.88);font-size:12px">Jonas · Coral Saga: Ember</div>
+          </div>
+        </div>
+        <div style="background:#111214;border-left:1px solid #1e1f22;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 16px 12px 20px;border-bottom:1px solid #1e1f22"><span style="font:500 11px 'IBM Plex Mono',monospace;width:20px;height:20px;border-radius:4px;background:#ecebe7;color:#121315;display:grid;place-items:center">3</span><span style="font:500 11px 'IBM Plex Mono',monospace;letter-spacing:.08em;color:#c9c8c4">TILE 3 · WATCHING</span></div>
+          <div style="display:flex;align-items:stretch;height:40px;padding:0 12px;gap:2px;border-bottom:1px solid #1e1f22"><span style="display:flex;align-items:center;padding:0 9px;color:#a3a3a8">Tile</span><span style="display:flex;align-items:center;gap:6px;padding:0 9px;font-weight:500;box-shadow:inset 0 -2px 0 #3cbfd8"><span style="width:18px;height:18px;border-radius:5px;background:#232428;font:600 8px/18px 'IBM Plex Mono',monospace;text-align:center;color:#c9c8c4">SL</span>SoulLink</span></div>
+          <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:center;gap:10px"><span style="width:30px;height:30px;border-radius:50%;background:#a6d65a;color:#121315;display:grid;place-items:center;font-weight:700">J</span><div style="display:flex;flex-direction:column"><span style="font-weight:600">Jonas · Route 110</span><span style="font-size:12px;color:#6fd39a">caught Voltwing · 2 min ago</span></div></div>
+            <div style="display:flex;flex-direction:column">
+              <sc-for list="{{ jonas }}" as="m" hint-placeholder-count="6"><div style="display:grid;grid-template-columns:40px minmax(0,1fr) 24px;gap:10px;align-items:center;padding:5px 0;border-top:1px solid #232428"><dc-import name="creature-icon" species="{{ m.sp }}" state="{{ m.state }}" hint-size="40px,30px"></dc-import><div style="display:flex;flex-direction:column;gap:3px"><div style="display:flex;gap:6px;align-items:baseline"><span style="font-weight:600;color:{{ m.fg }}">{{ m.nick }}</span><span style="font-size:11px;color:#8e8e94">{{ m.sp }}</span><span style="margin-left:auto;font:500 11px 'IBM Plex Mono',monospace;color:#a3a3a8">{{ m.lv }}</span></div><div style="height:4px;border-radius:2px;background:#26272b"><div style="height:100%;width:{{ m.w }};background:{{ m.c }};border-radius:2px"></div></div></div><dc-import name="creature-icon" species="{{ m.mine }}" size="mini" owner="#6f9cff" state="{{ m.state }}" hint-size="24px,18px"></dc-import></div></sc-for>
+            </div>
+            <span style="font-size:12px;color:#8e8e94">Right column: your linked partner. Read only; changes go through the run screen.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="5h" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5h</span><span style="font-size:15px;color:#3a3936">SoulLink notices · important · info · hint</span></div>
+      <div data-screen-label="5h SoulLink notices" style="width:440px;padding:24px;box-sizing:border-box;border-radius:10px;background:#0b0b0c;color:#ecebe7;display:flex;flex-direction:column;gap:8px;box-shadow:0 30px 60px rgba(0,0,0,.25)">
+        <sc-for list="{{ slToasts }}" as="n" hint-placeholder-count="3">
+          <div style="display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:10px;padding:12px;border-radius:10px;background:{{ n.bg }};border:1px solid {{ n.line }}">
+            <dc-import name="creature-icon" species="{{ n.sp }}" state="{{ n.st }}" hint-size="40px,30px"></dc-import>
+            <div style="display:flex;flex-direction:column;gap:3px"><span style="font-size:11px;font-weight:500;color:{{ n.srcFg }}">{{ n.src }}</span><span style="font-size:13px;line-height:1.45">{{ n.msg }}</span><sc-if value="{{ n.hasAct }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:6px;margin-top:4px"><span style="height:28px;padding:0 10px;border-radius:6px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-size:12px;font-weight:600">{{ n.act }}</span><span style="height:28px;padding:0 10px;border-radius:6px;border:1px solid #2b5560;display:flex;align-items:center;font-size:12px;font-weight:600">{{ n.act2 }}</span></div></sc-if></div>
+            <span style="color:#7d7d83">×</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5f · MANUAL CORRECTION · EVERY CHANGE SAYS WHO SEES IT AND IS LOGGED</div>
+  <div id="5f" style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+    <div data-screen-label="5f-1 Encounter doesnt count" style="width:400px;padding:16px;box-sizing:border-box;border-radius:10px;background:#1d1e22;border:1px solid #34353a;color:#ecebe7;display:flex;flex-direction:column;gap:12px;font-size:13px;box-shadow:0 18px 40px rgba(0,0,0,.35)">
+      <span style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">5f-1 · POPOVER FROM “DOESN’T COUNT”</span>
+      <span style="font-size:15px;font-weight:600">This encounter doesn’t count?</span>
+      <div style="display:flex;align-items:center;gap:10px"><dc-import name="creature-icon" species="Tidepup" hint-size="40px,30px"></dc-import><span>Wild Tidepup · Route 104 · detected 22:41</span></div>
+      <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12px;color:#8e8e94">Reason</span><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;padding:3px;border-radius:7px;background:#1a1b1e;border:1px solid #2c2d32;font-size:12px;text-align:center"><span style="padding:5px 0;border-radius:5px;background:#2c2d32;font-weight:500">Dupe</span><span style="padding:5px 0;color:#a3a3a8">Shiny</span><span style="padding:5px 0;color:#a3a3a8">Wrong</span></div></div>
+      <span style="font-size:12px;color:#8e8e94;line-height:1.5">Route 104 stays open for you. Lena, Jonas and Sam see this in the log.</span>
+      <div style="display:flex;justify-content:flex-end;gap:6px"><span style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #3a3b40;display:flex;align-items:center">Cancel</span><span style="height:30px;padding:0 12px;border-radius:6px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-weight:600">Doesn’t count</span></div>
+    </div>
+    <div data-screen-label="5f-2 Undo death" style="width:400px;padding:16px;box-sizing:border-box;border-radius:10px;background:#1d1e22;border:1px solid #4a2a24;color:#ecebe7;display:flex;flex-direction:column;gap:12px;font-size:13px;box-shadow:0 18px 40px rgba(0,0,0,.35)">
+      <span style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">5f-2 · DIALOG · GRAVEYARD ROW → UNDO</span>
+      <span style="font-size:15px;font-weight:600">Undo the death of link group 7?</span>
+      <div style="display:flex;flex-direction:column;gap:6px"><sc-for list="{{ undoRows }}" as="u" hint-placeholder-count="4"><div style="display:grid;grid-template-columns:8px 50px 24px minmax(0,1fr);gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:50%;background:{{ u.c }}"></span><span>{{ u.n }}</span><dc-import name="creature-icon" species="{{ u.sp }}" size="mini" state="dead" hint-size="24px,18px"></dc-import><span style="color:#a3a3a8">{{ u.t }}</span></div></sc-for></div>
+      <span style="font-size:12px;color:#8e8e94;line-height:1.5">All four come back to their boxes, not the team. Everyone in the run sees “Max undid a death” with your reason.</span>
+      <div style="height:32px;border-radius:6px;background:#1a1b1e;border:1px solid #2c2d32;display:flex;align-items:center;padding:0 10px;color:#7d7d83">Reason (shown in the log)…</div>
+      <div style="display:flex;justify-content:flex-end;gap:6px"><span style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #3a3b40;display:flex;align-items:center">Cancel</span><span style="height:30px;padding:0 12px;border-radius:6px;background:#ef8a78;color:#161512;display:flex;align-items:center;font-weight:600">Undo death</span></div>
+    </div>
+    <div data-screen-label="5f-3 Change link group" style="width:400px;padding:16px;box-sizing:border-box;border-radius:10px;background:#1d1e22;border:1px solid #34353a;color:#ecebe7;display:flex;flex-direction:column;gap:12px;font-size:13px;box-shadow:0 18px 40px rgba(0,0,0,.35)">
+      <span style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">5f-3 · POPOVER FROM A CREATURE</span>
+      <span style="font-size:15px;font-weight:600">Change link group · Sprig (Mossling)</span>
+      <div style="display:flex;flex-direction:column;border-radius:8px;background:#16171a;border:1px solid #26272b"><sc-for list="{{ groupOpts }}" as="g" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #26272b;background:{{ g.bg }}"><span style="width:16px;height:16px;border-radius:50%;border:{{ g.radio }};box-sizing:border-box"></span><span style="font-weight:500">{{ g.l }}</span><span style="margin-left:auto;font-size:12px;color:{{ g.fg }}">{{ g.sub }}</span></div></sc-for></div>
+      <span style="font-size:12px;color:#8e8e94;line-height:1.5">Moving Sprig also changes who dies with it. Lena, Jonas and Sam see the change and can undo it.</span>
+      <div style="display:flex;justify-content:flex-end;gap:6px"><span style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #3a3b40;display:flex;align-items:center">Cancel</span><span style="height:30px;padding:0 12px;border-radius:6px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-weight:600">Move to group 3</span></div>
+    </div>
+    <div data-screen-label="5f-4 Add creature manually" style="width:400px;padding:16px;box-sizing:border-box;border-radius:10px;background:#1d1e22;border:1px solid #34353a;color:#ecebe7;display:flex;flex-direction:column;gap:10px;font-size:13px;box-shadow:0 18px 40px rgba(0,0,0,.35)">
+      <span style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">5f-4 · DIALOG · ROUTES TABLE → ADD</span>
+      <span style="font-size:15px;font-weight:600">Add a creature by hand</span>
+      <div style="display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px 10px;align-items:center"><span style="color:#8e8e94">Route</span><div style="height:32px;border-radius:6px;background:#1a1b1e;border:1px solid #2c2d32;display:flex;align-items:center;padding:0 10px">Route 121<span style="margin-left:auto;font-size:11px;color:#7d7d83">▾</span></div><span style="color:#8e8e94">Species</span><div style="height:32px;border-radius:6px;background:#1a1b1e;border:1.5px solid #3cbfd8;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 6px"><dc-import name="creature-icon" species="Frostkit" size="mini" hint-size="24px,18px"></dc-import>Frostkit<span style="margin-left:auto;font-size:11px;color:#7d7d83">▾</span></div><span style="color:#8e8e94">Nickname</span><div style="height:32px;border-radius:6px;background:#1a1b1e;border:1px solid #2c2d32;display:flex;align-items:center;padding:0 10px">Flurry</div><span style="color:#8e8e94">Level · state</span><div style="display:flex;gap:6px"><div style="width:70px;height:32px;border-radius:6px;background:#1a1b1e;border:1px solid #2c2d32;display:flex;align-items:center;padding:0 10px;font-family:'IBM Plex Mono',monospace">21</div><div style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:3px;border-radius:7px;background:#1a1b1e;border:1px solid #2c2d32;font-size:12px;text-align:center"><span style="padding:5px 0;border-radius:5px;background:#2c2d32;font-weight:500">Box</span><span style="padding:5px 0;color:#a3a3a8">Team</span><span style="padding:5px 0;color:#a3a3a8">Dead</span></div></div></div>
+      <span style="font-size:12px;color:#8e8e94;line-height:1.5">Replaces “missed” on Route 121 and joins link group 6. Marked “manual” for everyone.</span>
+      <div style="display:flex;justify-content:flex-end;gap:6px"><span style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #3a3b40;display:flex;align-items:center">Cancel</span><span style="height:30px;padding:0 12px;border-radius:6px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-weight:600">Add</span></div>
+    </div>
+    <div data-screen-label="5f-5 Mark route missed" style="width:400px;padding:16px;box-sizing:border-box;border-radius:10px;background:#1d1e22;border:1px solid #34353a;color:#ecebe7;display:flex;flex-direction:column;gap:12px;font-size:13px;box-shadow:0 18px 40px rgba(0,0,0,.35)">
+      <span style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em">5f-5 · POPOVER FROM A ROUTE</span>
+      <span style="font-size:15px;font-weight:600">Mark Route 112 as missed for you?</span>
+      <span style="color:#c9c8c4;line-height:1.5">You won’t get a creature here. Lena, Jonas and Sam can still catch on Route 112, but their catches won’t be linked to you.</span>
+      <span style="font-size:12px;color:#8e8e94">Logged as manual · visible to all run members</span>
+      <div style="display:flex;justify-content:flex-end;gap:6px"><span style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #3a3b40;display:flex;align-items:center">Cancel</span><span style="height:30px;padding:0 12px;border-radius:6px;background:#3cbfd8;color:#161512;display:flex;align-items:center;font-weight:600">Mark as missed</span></div>
+    </div>
+  </div>
+
+  <div style="font:500 13px 'IBM Plex Mono',monospace;color:#5b5a56;letter-spacing:.04em;border-top:1px solid #c4c3be;padding-top:16px">5i · SETTINGS · GENERATED FROM THE PLUGIN’S SCHEMA (4b → “All 14 settings”)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:64px;align-items:flex-start">
+    <div id="5i" style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font:500 13px 'IBM Plex Mono',monospace;background:#1b1b1d;color:#f6f5f2;padding:4px 8px;border-radius:4px">5i</span><span style="font-size:15px;color:#3a3936">Player Settings → Plugins → SoulLink &amp; Nuzlocke → Settings · SettingsRow only · 1440 × 900</span></div>
+      <div data-screen-label="5i SoulLink settings" style="width:1440px;height:900px;background:#121315;color:#ecebe7;display:grid;grid-template-columns:232px 300px minmax(0,1fr);overflow:hidden;border-radius:10px;box-shadow:0 30px 60px rgba(0,0,0,.25)">
+        <aside style="background:#0e0f10;border-right:1px solid #232428;display:flex;flex-direction:column;padding:24px 16px;gap:28px"><div style="display:flex;align-items:center;gap:10px;padding:0 8px"><dc-import name="framebeam-mark" concept="a" product="player" palette="signal" size="22" hint-size="22px,22px"></dc-import><div style="font-weight:600;font-size:16px">FrameBeam Player</div></div><nav style="display:flex;flex-direction:column;gap:2px;font-size:14px"><div style="padding:9px 10px;color:#a3a3a8">Library</div><div style="padding:7px 10px 7px 22px;color:#a3a3a8">Runs</div><div style="padding:9px 10px;color:#a3a3a8">Emulation</div><div style="padding:9px 10px;color:#a3a3a8">Controllers</div><div style="padding:9px 10px;border-radius:6px;background:#1f2024;font-weight:500">Settings</div></nav></aside>
+        <div style="background:#16171a;border-right:1px solid #232428;padding:28px 16px;display:flex;flex-direction:column;gap:6px"><div style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em;padding:0 8px 8px">SETTINGS</div><div style="padding:11px 12px;font-size:14px;font-weight:600">Updates</div><div style="padding:11px 12px;font-size:14px;font-weight:600">Hubs</div><div style="padding:11px 12px;font-size:14px;font-weight:600">Appearance</div><div style="padding:11px 12px;border-radius:8px;display:flex;flex-direction:column;gap:3px;background:#1f2024;box-shadow:0 0 0 1px #2f3035"><span style="font-size:14px;font-weight:600">Plugins</span><span style="font-size:12px;color:#8e8e94">3 on · 1 update</span></div><div style="padding:11px 12px;font-size:14px;font-weight:600">Diagnostics</div></div>
+        <main style="padding:20px 36px;display:flex;flex-direction:column;gap:12px;min-width:0;overflow:hidden">
+          <div style="font-size:13px;color:#a3a3a8">← SoulLink &amp; Nuzlocke</div>
+          <header style="display:flex;align-items:center;gap:10px"><div style="font-size:26px;font-weight:600;letter-spacing:-.015em">Settings</div><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:#15262b;color:#3cbfd8">✓ Official</span><span style="margin-left:auto;font-size:13px;color:#8e8e94">Rules apply to new runs; running runs keep theirs</span></header>
+          <div style="display:flex;flex-direction:column"><div style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em;padding-bottom:8px;border-bottom:1px solid #26272b">RULE DEFAULTS</div><sc-for list="{{ setRules }}" as="r" hint-placeholder-count="5"><dc-import name="settings-row" row="{{ r }}" hint-size="100%,60px"></dc-import></sc-for></div>
+          <div style="display:flex;flex-direction:column"><div style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em;padding-bottom:8px;border-bottom:1px solid #26272b">HUD</div><sc-for list="{{ setHud }}" as="r" hint-placeholder-count="2"><dc-import name="settings-row" row="{{ r }}" hint-size="100%,60px"></dc-import></sc-for></div>
+          <div style="display:flex;flex-direction:column"><div style="font:500 11px 'IBM Plex Mono',monospace;color:#7d7d83;letter-spacing:.08em;padding-bottom:8px;border-bottom:1px solid #26272b">NOTICES</div><sc-for list="{{ setNotices }}" as="r" hint-placeholder-count="2"><dc-import name="settings-row" row="{{ r }}" hint-size="100%,60px"></dc-import></sc-for></div>
+        </main>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const D = { Max: '#6f9cff', Lena: '#f07ab8', Jonas: '#a6d65a', Sam: '#b39cf5' }, L = { Max: '#2f5fd0', Lena: '#b8327a', Jonas: '#4d7a14', Sam: '#6a4fc4' };
+    const stepNames = ['Mode', 'Players', 'Games', 'Rules', 'Summary'];
+    const steps = (cur) => stepNames.map((l, i) => ({ l, mark: i < cur ? '✓' : String(i + 1), bg: i === cur ? '#1f2024' : 'transparent', fg: i === cur ? '#ecebe7' : i < cur ? '#c9c8c4' : '#7d7d83', fw: i === cur ? 600 : 400, dotBg: i < cur ? '#3cbfd8' : i === cur ? '#15262b' : 'transparent', dotFg: i < cur ? '#161512' : i === cur ? '#3cbfd8' : '#7d7d83', dotRing: i === cur ? 'inset 0 0 0 1.5px #3cbfd8' : i > cur ? 'inset 0 0 0 1.5px #3a3b40' : 'none' }));
+    const W = [
+      ['5a-1', 'Mode', 'Choose how the run works', 'You can’t switch mode after the start.', 'Next · Players', ''],
+      ['5a-2', 'Players · invite state', 'Who plays?', 'Invite up to 3 hub users. Everyone plays on their own Player.', 'Next · Games', '← Mode'],
+      ['5a-3', 'Game per player · twins mixed', 'Which game does each player use?', 'From each player’s Library.', 'Next · Rules', '← Players'],
+      ['5a-4', 'Rules · sensible defaults', 'Rules', 'Defaults come from Settings (5i). Everyone sees the same rules.', 'Next · Summary', '← Games'],
+      ['5a-5', 'Summary → Start', 'Ready to start Ember & Tide?', 'Starting creates the run on hub.example.com and a save slot per player.', 'Start run', '← Rules']
+    ].map(([id, cap, title, lead, next, back], i) => ({ id, cap, label: id + ' Start run ' + cap, title, lead, next, back, steps: steps(i), isMode: i === 0, isPlayers: i === 1, isGames: i === 2, isRules: i === 3, isSummary: i === 4 }));
+    const inv = (C, light) => [
+      ['Max', 'you · host', 'Joined', light ? '#e2f3e8' : '#17291f', light ? '#2f7d4f' : '#6fd39a', ''],
+      ['Lena', 'lena · last seen now', 'Joined', light ? '#e2f3e8' : '#17291f', light ? '#2f7d4f' : '#6fd39a', 'Remove'],
+      ['Jonas', 'jonas · invited 2 min ago', 'Pending', light ? '#f7ecd6' : '#2a2414', light ? '#8a5a00' : '#e5b45a', 'Withdraw'],
+      ['Sam', 'sam · offline', 'Pending', light ? '#f7ecd6' : '#2a2414', light ? '#8a5a00' : '#e5b45a', 'Withdraw']
+    ].map(([n, sub, st, sBg, sFg, act]) => ({ n, i: n[0], c: C[n], sub, st, sBg, sFg, act }));
+    const tog = (l, d, on) => ({ l, d, bg: on ? '#3cbfd8' : '#2c2d32', k: on ? '21px' : '3px' });
+    const hp = v => v > .5 ? '#6fd39a' : v > .2 ? '#e5b45a' : '#ef8a78';
+    const row = (label, desc, ctrl, x = {}) => ({ label, desc, ctrl, reset: 'none', ...x });
+    return {
+      wiz: W, invitees: inv(D, false), inviteesL: inv(L, true),
+      gamesPer: [['Max', 'Coral Saga: Ember', '✓ in Library', '#6fd39a'], ['Lena', 'Coral Saga: Tide', '✓ twin version', '#6fd39a'], ['Jonas', 'Picks when joining', 'pending', '#8e8e94'], ['Sam', 'Picks when joining', 'pending', '#8e8e94']].map(([n, game, note, fg]) => ({ n, c: D[n], game, note, fg })),
+      rules: [tog('First encounter only', 'Only the first creature on each route counts', true), tog('Dupes clause', 'Re-roll if you already own that line', true), tog('Shiny clause', 'Shinies may always be caught', true), tog('Hordes count as first encounter', 'Off: hordes are skipped', true), tog('Linked pairs differ in primary type', 'No two linked partners share a type', false), tog('Only linked pairs in the team', 'A creature joins only with all partners', true), tog('Nickname required', 'Reminder after each catch', true), tog('Level caps as hints', 'Shows the next gym’s cap; never blocks', true)],
+      sumPlayers: [['Max', 'Ember'], ['Lena', 'Tide'], ['Jonas', 'Ember'], ['Sam', 'pending']].map(([n, g]) => ({ n, g, c: D[n] })),
+      hubNav: ['Library', 'Saves', 'Systems & Cores', 'Clients', 'Users', 'Plugins', 'Runs', 'Settings'].map(l => ({ l, bg: l === 'Runs' ? '#fff' : 'transparent', ring: l === 'Runs' ? '0 0 0 1px #e3e1dc' : 'none', fw: l === 'Runs' ? 500 : 400, fg: l === 'Runs' ? '#1b1b1d' : '#55544f' })),
+      hubSteps: stepNames.map((l, i) => ({ n: i + 1, l, bar: i < 1 ? '#3cbfd8' : i === 1 ? '#1a7f96' : '#e3e1dc', fg: i === 1 ? '#1b1b1d' : '#6b6a66', fw: i === 1 ? 600 : 400 })),
+      locStates: [['Route 104', 'first encounter still open', 'No encounter yet', '#15262b', '#3cbfd8'], ['Route 104', 'wild battle running', 'Encounter now', '#15262b', '#3cbfd8'], ['Route 103', 'Sprig · Mossling', 'Caught Mossling', '#17291f', '#6fd39a'], ['Route 102', 'fled or fainted', 'Missed', '#232428', '#a3a3a8'], ['Driftwood Town', 'no encounters here', 'Not a route', '#232428', '#a3a3a8']].map(([place, note, s, bg, fg]) => ({ place, note, s, bg, fg })),
+      hudCompact: [['Route 104', 'no encounter yet', '#3cbfd8', '#a9cdd6'], ['Route 104', 'encounter now', '#3cbfd8', '#3cbfd8'], ['Route 103', 'caught', '#6fd39a', '#6fd39a'], ['Driftwood Town', 'not a route', '#7d7d83', '#8e8e94']].map(([place, s, c, fg]) => ({ place, s, c, fg })),
+      jonas: [['Volt', 'Voltwing', 'Lv 19', 1, 'Mossling'], ['Pebs', 'Pebblor', 'Lv 18', .7, 'Emberkit'], ['Shelly', 'Shellsprout', 'Lv 17', .4, 'Voltwing'], ['Mo', 'Mossling', 'Lv 17', .15, 'Glimmoth'], ['Ash', 'Emberkit', 'dead', 0, 'Fernfox', 'dead'], ['Ferny', 'Fernfox', 'dead', 0, 'Pebblor', 'dead']].map(([nick, sp, lv, v, mine, st]) => ({ nick, sp, lv, w: Math.round(v * 100) + '%', c: hp(v), mine, state: st || 'alive', fg: st ? '#8e8e94' : '#ecebe7' })),
+      slToasts: [
+        { sp: 'Mossling', st: 'dead', src: 'SoulLink & Nuzlocke · important', srcFg: '#3cbfd8', msg: 'Lena’s Tidepup fainted. Your linked Mossling is dead too.', bg: '#15262b', line: '#1f4650', hasAct: true, act: 'Open run', act2: 'Undo death…' },
+        { sp: 'Voltwing', st: 'alive', src: 'SoulLink & Nuzlocke', srcFg: '#8e8e94', msg: 'Jonas caught Voltwing on Route 110.', bg: '#1d1e22', line: '#34353a', hasAct: false },
+        { sp: 'Emberkit', st: 'empty', src: 'SoulLink & Nuzlocke', srcFg: '#8e8e94', msg: 'New route: Route 104. No encounter yet.', bg: '#1d1e22', line: '#34353a', hasAct: false }
+      ],
+      undoRows: [['Max', 'Fernfox', 'fainted to Gym Leader'], ['Lena', 'Brinecrab', 'linked partner died'], ['Jonas', 'Duskowl', 'linked partner died'], ['Sam', 'Mossling', 'linked partner died']].map(([n, sp, t]) => ({ n, c: D[n], sp, t })),
+      groupOpts: [['Group 3 · Route 103', 'Lena, Jonas, Sam · all alive', true], ['Group 1 · Route 101', 'full · 4 of 4', false], ['No group', 'unlinked, dies alone', false]].map(([l, sub, on]) => ({ l, sub, bg: on ? '#15262b' : 'transparent', radio: on ? '5px solid #3cbfd8' : '1.5px solid #3a3b40', fg: on ? '#a9cdd6' : '#8e8e94' })),
+      setRules: [
+        row('Default mode', 'For new runs', 'seg', { opts: ['Nuzlocke', 'SoulLink'], value: 'SoulLink' }),
+        row('First encounter only', 'Only the first creature on each route counts', 'toggle', { on: true }),
+        row('Dupes clause', 'Re-roll if you already own that line', 'toggle', { on: true }),
+        row('Linked pairs differ in primary type', 'No two linked partners share a type', 'toggle', { on: false, changed: true })
+      ],
+      setHud: [row('HUD widget', 'Location and encounter status', 'seg', { opts: ['Off', 'Compact', 'Expanded'], value: 'Compact' }), row('HUD corner', 'Top right is reserved for Diagnostics', 'seg', { opts: ['↙ Bottom left', '↘ Bottom right', '↖ Top left'], value: '↙ Bottom left' })],
+      setNotices: [row('Notices while playing', 'Deaths in your link groups are always shown', 'select', { value: 'Important only' }), row('Notices in the Library', 'When a run member’s creature dies', 'toggle', { on: true })]
+    };
+  }
+}
+</script>
+</body>
+</html>
