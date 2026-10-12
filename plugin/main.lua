@@ -82,15 +82,20 @@ function A:start()
   end
   self.run = fb.run.current()
   self.me = self.run.me
+  self.viewing = self.run.view == true -- run view of the Runs screen: shell context, read only
+  -- run view: no game, so no core calls, no tracking, no notices; only the `run` slot shows the run
+  if self.viewing then self.sync:push("screen", screen.empty(tr)) end
   self.st = state.ensure(util.copy(fb.run.state()))
-  self.last_enc = fb.run.state() and util.encode(self.st) or nil
+  self.last_enc = (not self.viewing and fb.run.state()) and util.encode(self.st) or nil
   self:load_events()
-  self.live = true
+  self.live = not self.viewing
   fb.run.on("event", function(ev) self:on_event(ev) end)
   fb.run.on("state", function() self.dirty = true end)
   fb.run.on("participants", function() self.dirty = true end)
   fb.run.on("status", function() self.dirty = true end)
-  fb.events.on("fb", "tiles", function(list) self.tiles = type(list) == "table" and list or {}; self.dirty = true end)
+  if not self.viewing then
+    fb.events.on("fb", "tiles", function(list) self.tiles = type(list) == "table" and list or {}; self.dirty = true end)
+  end
   fb.on_tick(function() self:tick() end)
   self:poll(true)
   self:render()
@@ -288,7 +293,7 @@ end
 
 function A:states()
   local states = self.fb.run.states()
-  if self.me and states[self.me] == nil and self.st then states[self.me] = self.st end
+  if not self.viewing and self.me and states[self.me] == nil and self.st then states[self.me] = self.st end
   return states
 end
 
@@ -308,6 +313,11 @@ function A:render()
   self.view = view
   self:process_queue(view)
   local ctx = self:ctx(view)
+  if self.viewing then
+    -- read-only run section of the Runs screen: the run screen without correction forms or actions
+    self.sync:push("run", screen.build(ctx))
+    return
+  end
   self.sync:push("panel", panel.build(ctx))
   self.sync:push("hud", hud.build(ctx))
   self.sync:push("screen", screen.build(ctx))
@@ -2131,9 +2141,9 @@ end
 --- The own player entry of the view (or nil).
 function C.me(ctx) return C.player(ctx.view, ctx.me) end
 
---- Run status text and whether writes are accepted.
+--- Whether writes are accepted: run starting/active and not the read-only run view.
 function C.writable(run)
-  return run and (run.status == "starting" or run.status == "active")
+  return run and not run.view and (run.status == "starting" or run.status == "active") or false
 end
 
 function C.empty(tr, title_key, text_key)
@@ -2777,15 +2787,24 @@ function M.build(tr, player)
     style = "meta" }
 end
 
---- Match the host event `tiles` ({ id, player, game }) to view players by name (case-insensitive).
---- Returns { [tile id] = player }.
+--- Match the host event `tiles` ({ id, player, user_id, game }) to view players: by `user_id` first
+--- (empty string = unknown), by name (case-insensitive) as fallback. Returns { [tile id] = player }.
 function M.match(tiles, view)
   local out = {}
   for _, t in ipairs(type(tiles) == "table" and tiles or {}) do
     if type(t) == "table" and type(t.id) == "string" and t.id:match("^[%w_.%-]+$") and #t.id <= 64 then
-      for _, p in ipairs(view.players) do
-        if type(t.player) == "string" and tostring(p.name):lower() == t.player:lower() then out[t.id] = p; break end
+      local found
+      if type(t.user_id) == "string" and t.user_id ~= "" then
+        for _, p in ipairs(view.players) do
+          if p.id == t.user_id then found = p; break end
+        end
       end
+      if not found and type(t.player) == "string" then
+        for _, p in ipairs(view.players) do
+          if tostring(p.name):lower() == t.player:lower() then found = p; break end
+        end
+      end
+      out[t.id] = found
     end
   end
   return out
