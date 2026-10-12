@@ -1,0 +1,24 @@
+{
+  "id": "net.framebeam.soullink",
+  "name": "SoulLink & Nuzlocke",
+  "version": "0.1.0",
+  "api": 1,
+  "type": "script",
+  "requires": { "net.framebeam.pokemon-core": "^0.1" },
+  "games": [
+    { "system": "3ds", "codes": ["000400000011C400", "000400000011C500"] }
+  ],
+  "permissions": ["ui", "run.state"],
+  "entry": "main.lua",
+  "ui": {
+    "panel": { "title": "SoulLink" },
+    "hud": true,
+    "tile": true,
+    "screen": { "title": "SoulLink" },
+    "hotkeys": [
+      { "id": "toggle-hud", "key": "Ctrl+H", "label": "Show or hide the SoulLink widget" },
+      { "id": "doesnt-count", "key": "Ctrl+D", "label": "Encounter doesn't count" },
+      { "id": "open-run", "key": "Ctrl+R", "label": "Open the run" }
+    ]
+  }
+}

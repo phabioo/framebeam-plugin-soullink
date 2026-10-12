@@ -7,7 +7,7 @@ framebeam-plugin-soullink is the SoulLink/Nuzlocke plugin. A group of 2 to 4 pla
 ## Relation to FrameBeam
 
 - Plugin for [FrameBeam](https://github.com/phabioo/framebeam) (self-hosted retro gaming platform). Interface: `docs/architecture/12-plugins.md` in the FrameBeam repository.
-- Plugin API v1 is planned (FrameBeam 0.11) and not implemented yet; everything here is design until it exists. Open API items are marked open, never invented.
+- Plugin API v1 ships with FrameBeam 0.11 (`docs/guides/plugin-api.md` there). Open API items are marked open, never invented.
 - Runtime: Lua 5.4 in the FrameBeam sandbox; UI only as declarative building blocks (no QML).
 
 ## Working rules
@@ -32,7 +32,8 @@ framebeam-plugin-soullink is the SoulLink/Nuzlocke plugin. A group of 2 to 4 pla
 
 ## Status and commands
 
-- Status: no code yet. Commands (test, lint, package) will be added here when they exist; list only commands that have been run.
+- Status: v0.1 in development (rules, detection, link groups, corrections, all in-game views, Hub board). Layout: `docs/architecture.md`.
+- Sources are modules in `src/`; `lua5.4 tools/bundle.lua` generates the committed `plugin/main.lua` (list new modules in `src/modules.txt`; `--check` fails when stale). Tests: `lua5.4 tests/run.lua` (fake `fb` with `fb.run`, `fb.ui` validator and a fake `pokemon.core`). Package: `python3 tools/package.py`; a tag `vX.Y.Z` builds the `.fbplugin` release asset (`.github/workflows/release.yml`).
 - The SessionStart hook `.claude/hooks/session-start.sh` only prepares cloud sessions (installs `lua5.4` via apt if missing).
 
 ## Pointers
