@@ -1,0 +1,20 @@
+# Modules bundled into plugin/main.lua (see tools/bundle.lua)
+app.controller
+app.sync
+data.oras
+main
+model.corrections
+model.detect
+model.events
+model.rules
+model.snapshot
+model.state
+model.util
+model.view
+ui.board
+ui.common
+ui.corrections
+ui.hud
+ui.panel
+ui.screen
+ui.tile
