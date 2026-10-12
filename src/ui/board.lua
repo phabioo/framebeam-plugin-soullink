@@ -45,7 +45,7 @@ function M.build(ctx)
   }
   if #rows > 0 then
     kids[#kids + 1] = { type = "section", id = "b-routes-s", title = tr("tab_routes", { n = #view.rows }),
-      children = { { type = "table", id = "b-routes", columns = columns, rows = rows } } }
+      children = { { type = "table", id = "b-routes-table", columns = columns, rows = rows } } }
   end
   if #grave > 0 then
     kids[#kids + 1] = { type = "section", id = "b-grave-s", title = tr("grave_title", { n = #view.graveyard }),
