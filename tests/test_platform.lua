@@ -100,8 +100,8 @@ t.case("run_settings keys map exactly onto rules.parse input", function()
   t.ok(not rules.parse(B.run({ "A", "B" })).mode_set)
 end)
 
-t.case("manifest declares the run slot and version 0.2.0", function()
-  t.eq(manifest.version, "0.2.0")
+t.case("manifest declares the run slot and version 0.2.1", function()
+  t.eq(manifest.version, "0.2.1")
   t.ok(manifest.ui.run and manifest.ui.run.title)
   t.ok(#manifest.ui.run.title >= 1 and #manifest.ui.run.title <= 40)
 end)
@@ -189,4 +189,13 @@ t.case("tiles: user_id first, name as fallback", function()
   t.eq(got.d, nil); t.eq(got.e.id, "u-jonas")
   t.ok(m.ui.trees["tile:a"] and m.ui.trees["tile:b"] and m.ui.trees["tile:c"] and m.ui.trees["tile:e"])
   t.eq(m.ui.trees["tile:d"], nil)
+end)
+
+t.case("ui validator rejects duplicate block ids with the path", function()
+  local ok, err = ui_validator.validate({ type = "column", id = "root", children = {
+    { type = "stat", id = "dup", value = "1" },
+    { type = "section", title = "s", children = { { type = "text", id = "dup", text = "x" } } },
+  } })
+  t.ok(not ok)
+  t.ok(err:find("duplicate dup", 1, true) and err:find("children[2].children[1]", 1, true), err)
 end)

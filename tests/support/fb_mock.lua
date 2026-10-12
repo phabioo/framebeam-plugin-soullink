@@ -70,7 +70,7 @@ function M.new(opts)
   local mock = { logs = {}, events = {}, provided = {}, watches = {}, dev_watches = {}, cache_files = {} }
   local regions = opts.memory or {}
   mock.regions = regions
-  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.2.0" } }
+  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.2.1" } }
   fb.game = opts.game or {}
   if opts.language and not fb.game.language then fb.game.language = opts.language end
   mock.fb = fb
@@ -305,6 +305,8 @@ function M.new(opts)
       setBoard = function(tree)
         if type(tree) ~= "table" then error("setBoard: table expected", 2) end
         if json.json_size(tree) > 64 * 1024 then error("setBoard: tree larger than 64 KiB", 2) end
+        local vok, verr = require("ui_validator").validate(tree)
+        if not vok then error("setBoard: ui tree: " .. verr, 2) end
         local ok, why = writable()
         if not ok then return nil, why end
         run.board = deep_copy(tree)
