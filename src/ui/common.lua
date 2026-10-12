@@ -88,9 +88,9 @@ end
 --- The own player entry of the view (or nil).
 function C.me(ctx) return C.player(ctx.view, ctx.me) end
 
---- Run status text and whether writes are accepted.
+--- Whether writes are accepted: run starting/active and not the read-only run view.
 function C.writable(run)
-  return run and (run.status == "starting" or run.status == "active")
+  return run and not run.view and (run.status == "starting" or run.status == "active") or false
 end
 
 function C.empty(tr, title_key, text_key)

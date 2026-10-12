@@ -70,7 +70,7 @@ function M.new(opts)
   local mock = { logs = {}, events = {}, provided = {}, watches = {}, dev_watches = {}, cache_files = {} }
   local regions = opts.memory or {}
   mock.regions = regions
-  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.1.0" } }
+  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.2.0" } }
   fb.game = opts.game or {}
   if opts.language and not fb.game.language then fb.game.language = opts.language end
   mock.fb = fb
@@ -222,7 +222,12 @@ function M.new(opts)
     mock.run = run
     local me = run.current.me
     local plugin_id = fb.plugin.id
+    run.attempts = 0 -- write calls (setState, event, setBoard) made while in view mode
     local function writable()
+      if run.current.view then
+        run.attempts = run.attempts + 1
+        return false, "read only outside the game"
+      end
       local s = run.current.status
       if s == "starting" or s == "active" then return true end
       return false, "run is " .. tostring(s)
@@ -317,7 +322,7 @@ function M.new(opts)
     return ui_validator.find(tree, id)
   end
   local function declared(slot)
-    if slot == "panel" or slot == "hud" or slot == "screen" or slot == "detail" then return true end
+    if slot == "panel" or slot == "hud" or slot == "screen" or slot == "detail" or slot == "run" then return true end
     return slot:match("^tile:[%w_.%-]+$") ~= nil
   end
   fb.ui = {

@@ -116,7 +116,8 @@ Event type `soullink.correction`, `source = "manual"`, payload at most 4 KiB. `p
 
 ## Wiring (`app.controller`)
 
-- Without `fb.run` (game not started from Runs): panel, HUD and screen show an empty state ("Start this game from Runs → Play run"), no core calls, no tracking.
+- Without `fb.run` (game not started from Runs, or shell context without an open run): panel, HUD and screen show an empty state ("Start this game from Runs → Play run"; the screen text also points to the Runs page), no core calls, no tracking.
+- Run view (`fb.run.current().view == true`, shell context, read only): the controller sets the `run` slot with the run screen builder (`screen.build` with `readonly`: routes, team & box, graveyard, event log; no correction forms or write buttons) and the screen slot shows the Runs pointer. No core calls, no polling, no notices, no board, no `tiles` subscription, no own state injected. Every write action is ignored; the platform would answer `setState`/`event`/`setBoard` with `nil, "read only outside the game"`. `common.writable` is false for a run with `view`.
 - With `fb.run`: own state is continued from `fb.run.state()`. Every 500 ms: `snapshot.from_core` (team, location, battle, badges; boxes every 5 s, in between the last box read is reused), `detect.diff`, `setState` only when the encoded state changed, facts posted as automatic events (English text from i18n, species shown as `#<id>` or the nickname until the core provides names). Core calls are `pcall`ed; failures are logged once. Paused/finished/abandoned runs are read only: no polling, no writes, banner in the panel, no action buttons.
 - Subscriptions: `fb.run.on` for `event`, `state`, `participants`, `status` (4 of 16), host event `tiles`, `fb.ui.on_action`. Events are cached (paged from seq 0), the view is recomputed at most every 250 ms when something changed.
 - `app.sync.push(slot, tree)`: unchanged tree = nothing, same structure with changed props on blocks with an id (at most 12) = `fb.ui.patch`, else `fb.ui.set`.
@@ -130,11 +131,12 @@ All strings come from `plugin/i18n/en.json` (source) and `de.json`; only tones, 
 
 - Panel (5b): run header with mode, name, read-only badge and "Open run"; `location` block (place, status, others on the same place); place picker (`select` over starter and Route 101..134 plus a `textfield` "Other place..." for free places, because the core has no location); encounter hint with "Doesn't count"; correction section when a form is open; own team rows (nickname or `#id`, level, HP bar when hp and max hp are known, linked partners as avatars, "Mark as dead" with danger confirm because the core has no live HP); graveyard chip toggling a list; footer with badges (`select`, editable by hand while the core has none), next level cap and "Run screen".
 - HUD (5c): one `card` (action `hud_toggle`): `SL` badge, place, status dot text. Expanded (click) or for 3 s after a linked death: other players with their state on the same place.
-- Tile (5d): `tiles` host event matched to participants by name (case-insensitive); strip text `SL <place> · <n> alive`.
+- Tile (5d): `tiles` host event (`{ id, player, user_id, game }`) matched to participants by `user_id` first, by name (case-insensitive) as fallback; strip text `SL <place> · <n> alive`.
 - Screen (5e, shown in the screen slot): header (run, status, mode, players with place, stats), correction section, `tabs`: Routes | Team & box | Graveyard | Event log. The Map tab appears first only when `data.oras.COORDS` has coordinates (none yet; drawn default F); the map block then shows the loading state until an image is set. Routes: filter chips, table (route, one column per player, group, status), selected route with actions (mark missed, doesn't count, undo death, change link group), "+ Add by hand". Team & box: per player team rows (own: change group, gift, dead) and box list. Graveyard: table, row action undoes the group's death. Event log: filter chips, newest 100 rows, manual rows warning tone, correction rows revert.
 - Corrections (5f): inline section; fields change with the actions `cf:<field>` (text fields commit on Enter), `corr_submit` validates with `corrections.validate_spec` and posts a manual `soullink.correction` event (text from i18n), `corr_cancel` closes. Danger/confirm dialogs on the buttons for undo death, mark dead, mark missed and revert. Forms: doesn't count (reason segments), undo death (reason field), set group, add by hand (species number, nickname, level, state), mark missed, mark dead, gift, revert.
 - Board (5gh): `board.build`.
-- Out of scope: run start rules step (5a, 5ah), stream view (5gs) and plugin settings (5i): the platform has no rules step or settings schema yet.
+- Run start rules (5a-4): the manifest field `run_settings` declares `mode` (enum `nuzlocke`|`soullink`, default `soullink`) and one boolean `rules.<flag>` per flag of `model.rules` with the same defaults; the Start dialog sends them as `settings["net.framebeam.soullink"] = { mode, rules = {...} }`, `rules.parse` reads them (the two-or-more-players mode fallback only applies to runs without settings). Labels and hints are the i18n keys `rs_*` (`rs_mode`, `rs_<flag>`, `rs_<flag>_hint`, `rs_mode_<value>`). `tests/test_platform.lua` checks the manifest against the validator rules and that its keys map exactly onto `rules.parse`.
+- Out of scope: Hub run wizard steps other than the platform's rules section (5ah), stream view (5gs) and plugin settings (5i): the platform has no settings schema yet.
 
 Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui` and `pokemon.core`; `tests/support/ui_validator.lua` checks every tree and patch against the documented block catalog (types, props, enums, ids, limits).
 
@@ -144,7 +146,8 @@ Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui
 - Family lookup (evolution lines) for the dupes clause: only the `family` hook exists, the default compares species ids. A table keyed by species ids is needed (no names).
 - `pairs_differ_primary_type` is stored but not evaluated: it needs primary types per species.
 - Zone id -> route key table (`data.oras.ZONE_TO_ROUTE`) and the ORAS level caps (`LEVEL_CAPS`) are to be filled and verified locally with the real game.
-- Rules at run start: where `settings["net.framebeam.soullink"]` is written (run wizard in the Player/Hub) is not defined by the platform; the plugin only reads it and falls back to the defaults. Changing rules during a run is not modeled.
+- pokemon-core is a manifest `requires` (`^0.1`): the Start dialog adds it to the run automatically (newest Hub version that fits) and it needs no `run.state` permission; the Hub must offer a matching version. Version 0.2.0 of this plugin.
+- Changing rules during a run is not modeled (run settings are fixed at the start).
 - Tracking start (baseline vs starter) is decided from the first snapshot; the run start flow (new game vs existing save) should tell the plugin explicitly (`opts.first`).
 - Participants with status other than `joined` are not players; `left` participants drop out of link groups.
 - Broken groups (someone missed) do not link the remaining members at all; whether partners that caught should stay linked is a rules question for the design.
@@ -153,5 +156,5 @@ Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui
 - Species names are not available from the core yet: creatures show as `#<species id>` or the nickname, and places as `Route <n>`.
 - The map needs coordinates and the image from the game file at runtime (`data.oras.COORDS`, `MAP_SIZE`); none yet, so the Map tab is hidden. Creature icons (`image` blocks) are not used for the same reason.
 - Text fields only report their value on Enter, so the correction forms say so; a form submit button cannot read unsent text.
-- Approval of corrections by another player, the settings page (5i) and the run start (5a) are not built.
+- Approval of corrections by another player and the settings page (5i) are not built; the run start (5a) is the platform's Start dialog with the manifest rules section (the mode cards and invite steps are the platform's).
 - Release: the `.fbplugin` is unsigned; signing and the Hub upload flow are open.

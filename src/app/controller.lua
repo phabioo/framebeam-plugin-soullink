@@ -64,15 +64,20 @@ function A:start()
   end
   self.run = fb.run.current()
   self.me = self.run.me
+  self.viewing = self.run.view == true -- run view of the Runs screen: shell context, read only
+  -- run view: no game, so no core calls, no tracking, no notices; only the `run` slot shows the run
+  if self.viewing then self.sync:push("screen", screen.empty(tr)) end
   self.st = state.ensure(util.copy(fb.run.state()))
-  self.last_enc = fb.run.state() and util.encode(self.st) or nil
+  self.last_enc = (not self.viewing and fb.run.state()) and util.encode(self.st) or nil
   self:load_events()
-  self.live = true
+  self.live = not self.viewing
   fb.run.on("event", function(ev) self:on_event(ev) end)
   fb.run.on("state", function() self.dirty = true end)
   fb.run.on("participants", function() self.dirty = true end)
   fb.run.on("status", function() self.dirty = true end)
-  fb.events.on("fb", "tiles", function(list) self.tiles = type(list) == "table" and list or {}; self.dirty = true end)
+  if not self.viewing then
+    fb.events.on("fb", "tiles", function(list) self.tiles = type(list) == "table" and list or {}; self.dirty = true end)
+  end
   fb.on_tick(function() self:tick() end)
   self:poll(true)
   self:render()
@@ -270,7 +275,7 @@ end
 
 function A:states()
   local states = self.fb.run.states()
-  if self.me and states[self.me] == nil and self.st then states[self.me] = self.st end
+  if not self.viewing and self.me and states[self.me] == nil and self.st then states[self.me] = self.st end
   return states
 end
 
@@ -290,6 +295,11 @@ function A:render()
   self.view = view
   self:process_queue(view)
   local ctx = self:ctx(view)
+  if self.viewing then
+    -- read-only run section of the Runs screen: the run screen without correction forms or actions
+    self.sync:push("run", screen.build(ctx))
+    return
+  end
   self.sync:push("panel", panel.build(ctx))
   self.sync:push("hud", hud.build(ctx))
   self.sync:push("screen", screen.build(ctx))
