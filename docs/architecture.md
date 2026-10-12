@@ -14,7 +14,7 @@ Status: package 1 (tooling and the pure run model) and package 2 (wiring, UI, re
 - `tests/`: `lua5.4 tests/run.lua` runs every `tests/test_*.lua` against synthetic data. Support: `support/fb_mock.lua` (fake `fb` with `fb.call` and `fb.run`), `support/build.lua` (record, tracker, event log builders), `support/t.lua`.
 - `tools/package.py`: builds and verifies `plugin/` as `<id>-<version>.fbplugin` (deterministic zip, copied from pokemon-core).
 - CI (`.github/workflows/ci.yml`): `lua5.4 tools/bundle.lua --check`, `lua5.4 tests/run.lua`, package build and verify.
-- Release (`.github/workflows/release.yml`): a tag `vX.Y.Z` (or manual run with an existing tag) checks bundle and tests, runs `tools/package.py --tag` (fails when the tag differs from the manifest version) and attaches the `.fbplugin` to the GitHub release. The package is unsigned.
+- Release (`.github/workflows/release.yml`): a tag `vX.Y.Z` (or a manual run with a tag; a new tag is created at the dispatch commit on `main`) checks bundle and tests, runs `tools/package.py --tag` (fails when the tag differs from the manifest version) and attaches the `.fbplugin` to the GitHub release. The package is unsigned.
 
 The model is pure: it never reads `fb` (only `snapshot.from_core(fb)` calls `fb.call`). Game names (species, moves, places) are never shipped; tables are keyed by internal ids and route keys.
 
