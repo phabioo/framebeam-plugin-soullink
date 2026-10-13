@@ -309,22 +309,13 @@ t.case("notices: new route hint and rate-limit tolerance", function()
   e.m.fb.ui.notify = orig
 end)
 
-t.case("map tab only with coordinates", function()
+t.case("map tab only when the core offers a map", function()
   local screen = require("ui.screen")
   local e = boot()
   e.step()
-  t.eq(screen.tab_ids()[1], "routes")
-  oras.COORDS = { ["route-101"] = { x = 100, y = 50, area = "west" } }
-  local ok, err = pcall(function()
-    e.act("place_select", "route-101")
-    local tabs = ui_validator.find(e.m.ui.trees.screen, "tabs")
-    t.eq(tabs.tabs[1], "Map")
-    local map = ui_validator.find(e.m.ui.trees.screen, "map")
-    t.eq(map.routes[1].id, "route-101")
-    t.eq(map.image, nil, "loading state without image")
-  end)
-  oras.COORDS = {}
-  if not ok then error(err, 0) end
+  t.eq(screen.tab_ids({})[1], "routes")
+  t.eq(screen.tab_ids({ map = { state = "unsupported" } })[1], "routes")
+  t.eq(screen.tab_ids({ map = { state = "scanning" } })[1], "map")
 end)
 
 t.case("validator rejects bad trees", function()
@@ -411,7 +402,7 @@ t.case("package builds and verifies", function()
   local ok = os.execute("python3 -c 'import sys' >/dev/null 2>&1")
   if not ok then return t.skip("python3 not available") end
   local dir = os.tmpname() .. ".d"
-  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.2.1 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/net.framebeam.soullink-0.2.1.fbplugin >/dev/null")
+  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.3.0 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/net.framebeam.soullink-0.3.0.fbplugin >/dev/null")
   t.ok(ok2, "package.py failed")
   local bad = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v9.9.9 >/dev/null 2>&1")
   t.ok(not bad, "tag/version mismatch must fail")

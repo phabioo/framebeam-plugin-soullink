@@ -18,6 +18,8 @@ local screen = require("ui.screen")
 local tile = require("ui.tile")
 local board = require("ui.board")
 local sync = require("app.sync")
+local icons_mod = require("app.icons")
+local maps_mod = require("app.maps")
 
 local A = {}
 A.__index = A
@@ -28,6 +30,8 @@ A.RENDER_MS = 250    -- at most 4 UI refreshes per second
 A.BOARD_MS = 5000    -- run board
 A.HUD_MS = 3000      -- HUD stays expanded after a linked death
 A.NOTICE_TRIES = 40  -- renders to wait for the state that shows a death
+A.MAX_ZONES = 120    -- learned zone mappings kept in the own state
+A.CAL_STEPS = { [2] = true, [10] = true, [40] = true }
 
 function A.new(fb)
   local self = setmetatable({}, A)
@@ -41,6 +45,7 @@ function A.new(fb)
   self.last_poll, self.last_box, self.last_render, self.last_board = -1e9, -1e9, -1e9, -1e9
   self.dirty = true
   self.errors = {}
+  self.unsupported = {} -- parts of pokemon.core that answered "unsupported"
   return self
 end
 
@@ -67,6 +72,8 @@ function A:start()
   self.viewing = self.run.view == true -- run view of the Runs screen: shell context, read only
   -- run view: no game, so no core calls, no tracking, no notices; only the `run` slot shows the run
   if self.viewing then self.sync:push("screen", screen.empty(tr)) end
+  self.icons = icons_mod.new(fb)
+  self.maps = maps_mod.new(fb)
   self.st = state.ensure(util.copy(fb.run.state()))
   self.last_enc = (not self.viewing and fb.run.state()) and util.encode(self.st) or nil
   self:load_events()
@@ -115,6 +122,8 @@ function A:tick()
     local ok, err = pcall(self.poll, self, full)
     if not ok then warn_once(self, "poll", "poll failed: " .. tostring(err)) end
   end
+  if not self.viewing and self.maps and self.maps:step(now) then self.dirty = true end
+  if not self.viewing and self.icons and self.icons:pump(now) then self.dirty = true end
   if self.hud_until and now >= self.hud_until then
     self.hud_until, self.hud_text = nil, nil
     self.dirty = true
@@ -131,10 +140,15 @@ end
 function A:poll(full)
   if not self:writable() then return end
   local cfg = rules.parse(self.run)
-  local snap = snapshot.from_core(self.fb, { skip_boxes = (not full) and self.boxes ~= nil, boxes = self.boxes })
+  local snap = snapshot.from_core(self.fb, { skip_boxes = (not full) and self.boxes ~= nil, boxes = self.boxes,
+    unsupported = self.unsupported })
   if snap.boxes then self.boxes = snap.boxes end
   local game = self.fb.game or {}
-  local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language } })
+  local zone = type(snap.location) == "table" and snap.location.zone or nil
+  if math.type(zone) == "float" then zone = math.tointeger(zone) end
+  self.cur_zone = math.type(zone) == "integer" and zone or nil
+  local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language },
+    zones = view_mod.merge_zones(self.run, self:states()) })
   self:commit(st, facts)
 end
 
@@ -281,7 +295,9 @@ end
 
 function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
-           events = self.events, hud_death = self.hud_until and self.hud_text or nil }
+           events = self.events, hud_death = self.hud_until and self.hud_text or nil,
+           map = self.maps and self.maps:view() or nil,
+           icon = self.icons and function(species, form) return self.icons:src(species, form) end or nil }
 end
 
 function A:render()
@@ -300,7 +316,15 @@ function A:render()
     self.sync:push("run", screen.build(ctx))
     return
   end
-  self.sync:push("panel", panel.build(ctx))
+  if self.ui.panel_run then
+    -- the panel itself shows the run view (the platform has no call that opens the screen slot)
+    local pctx = {}
+    for k, v in pairs(ctx) do pctx[k] = v end
+    pctx.compact, pctx.tab = true, self.ui.panel_tab or 1
+    self.sync:push("panel", screen.build(pctx))
+  else
+    self.sync:push("panel", panel.build(ctx))
+  end
   self.sync:push("hud", hud.build(ctx))
   self.sync:push("screen", screen.build(ctx))
 
@@ -377,10 +401,72 @@ local function field_value(field, value)
   return value
 end
 
+--- May the own state record a mapping for `zone`? Not when the static table has it or another
+--- player's mapping is in use; the own mapping can be changed; the number is limited.
+function A:can_learn(zone)
+  if oras.ZONES[zone] ~= nil then return false end
+  local own = self.st.zones and self.st.zones[tostring(zone)]
+  if own ~= nil then return true end
+  if view_mod.merge_zones(self.run, self:states())[zone] ~= nil then return false end
+  local n = 0
+  for _ in pairs(self.st.zones or {}) do n = n + 1 end
+  return n < A.MAX_ZONES
+end
+
+function A:learn_zone(st, zone, value)
+  if zone and self:can_learn(zone) then
+    st.zones = st.zones or {}
+    st.zones[tostring(zone)] = value
+  end
+end
+
 function A:set_place(input)
   if not self:writable() then return end
-  local st, fact = detect.set_place(self.st, input)
+  local st, fact = detect.set_place(self.st, input, nil, self.cur_zone)
+  local key = st.place.key
+  -- the answer for a reported zone is remembered and shared through the own state
+  if key and key ~= oras.STARTER then self:learn_zone(st, self.cur_zone, key) end
   self:commit(st, { fact })
+end
+
+-- ---------------------------------------------------------------- map setup and calibration
+
+function A:calib_route(route)
+  local c = self.ui.calib
+  if not c or not oras.route_number(route) then return end
+  local m = self.maps
+  c.route, c.msg = route, nil
+  local at = m:merged()[route]
+  c.x, c.y = at and at.x or (m.w or 0) // 2, at and at.y or (m.h or 0) // 2
+end
+
+function A:map_action(action, value)
+  local m, c = self.maps, self.ui.calib
+  if not m then return end
+  if action == "map_use" then
+    if type(value) == "string" then m:adopt(value) end
+  elseif action == "map_reset" then
+    m:reset()
+    self.ui.calib = nil
+  elseif action == "calib_toggle" then
+    self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
+  elseif c and action == "calib_route" then
+    self:calib_route(value)
+  elseif c and action == "calib_step" then
+    if A.CAL_STEPS[value] then c.step = value end
+  elseif c and action == "calib_move" and c.x then
+    local d, n = ({ l = { -1, 0 }, r = { 1, 0 }, u = { 0, -1 }, d = { 0, 1 } })[value], c.step or 10
+    if d then
+      c.x = math.max(0, math.min(m.w, c.x + d[1] * n))
+      c.y = math.max(0, math.min(m.h, c.y + d[2] * n))
+      c.msg = nil
+    end
+  elseif c and action == "calib_set" and c.route and c.x then
+    c.msg = m:set_coord(c.route, c.x, c.y) and "saved" or "failed"
+  elseif c and action == "calib_export" then
+    c.msg = m:export_line() and "exported" or "none"
+  end
+  self.dirty = true
 end
 
 -- ---------------------------------------------------------------- actions
@@ -388,7 +474,7 @@ end
 function A:on_action(action, value, slot)
   if slot == "hotkey" then
     if action == "toggle-hud" then return end -- the host shows or hides the widget
-    if action == "open-run" then action = "open_run"
+    if action == "open-run" then action = "open_run_toggle"
     elseif action == "doesnt-count" then action, value = "dc_open", nil
     else return end
   end
@@ -396,25 +482,42 @@ function A:on_action(action, value, slot)
   local me = my_player(self)
   local writable = self:writable()
 
-  if action == "open_run" then
+  if action == "open_run" or action == "open_run_toggle" then
+    -- the panel switches between the live view and the run view; the screen slot starts at its first tab
+    local open = action == "open_run" or not self.ui.panel_run
+    if open and not self.ui.panel_run then self.ui.panel_tab = 1 end
+    self.ui.panel_run = open
     self.ui.screen_tab = 1
-    self.ui.corr = self.ui.corr
     self.dirty = true
+  elseif action == "panel_back" then self.ui.panel_run = false; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
   elseif action == "tab" then
-    if math.type(value) == "integer" then self.ui.screen_tab = value; self.dirty = true end
+    if math.type(value) == "integer" then
+      if slot == "panel" then self.ui.panel_tab = value else self.ui.screen_tab = value end
+      self.dirty = true
+    end
   elseif action:sub(1, 3) == "rf:" then self.ui.routes_filter = action:sub(4); self.dirty = true
   elseif action:sub(1, 3) == "lf:" then self.ui.log_filter = action:sub(4); self.dirty = true
   elseif action == "route_select" then self.ui.selected_route = value; self.dirty = true
   elseif action == "map_select" then
     if type(value) == "table" then
-      if value.kind == "route" then self.ui.selected_route = value.id
+      if value.kind == "route" then
+        self.ui.selected_route = value.id
+        if self.ui.calib and oras.route_number(value.id) then self:calib_route(value.id) end
       elseif value.kind == "filter" then self.ui.map_filter = value.value end
       self.dirty = true
     end
+  elseif action:sub(1, 6) == "calib_" or action:sub(1, 4) == "map_" then
+    self:map_action(action, value)
   elseif not writable then
     return
+  elseif action == "zone_none" then
+    if self.cur_zone then
+      local st = util.copy(self.st)
+      self:learn_zone(st, self.cur_zone, false)
+      self:commit(st, {})
+    end
   elseif action == "place_select" then
     if type(value) == "string" then self:set_place(value) end
   elseif action == "place_text" then

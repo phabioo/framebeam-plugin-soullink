@@ -21,7 +21,7 @@ t.case("bundled plugin loads in the mock sandbox", function()
   local chunk = assert(loadfile("plugin/main.lua"))
   chunk()
   _G.fb = nil
-  t.eq(m.logs[1].text, "SoulLink & Nuzlocke 0.2.1 geladen.")
+  t.eq(m.logs[1].text, "SoulLink & Nuzlocke 0.3.0 geladen.")
 end)
 
 t.case("sources use no sandbox-forbidden globals", function()
@@ -38,8 +38,8 @@ end)
 t.case("manifest", function()
   local s = read("plugin/manifest.json")
   for _, needle in ipairs({
-    '"id": "net.framebeam.soullink"', '"name": "SoulLink & Nuzlocke"', '"version": "0.2.1"', '"api": 1',
-    '"net.framebeam.pokemon-core": "^0.1"', '"000400000011C400"', '"000400000011C500"',
+    '"id": "net.framebeam.soullink"', '"name": "SoulLink & Nuzlocke"', '"version": "0.3.0"', '"api": 1',
+    '"net.framebeam.pokemon-core": ">=0.1"', '"000400000011C400"', '"000400000011C500"',
     '"permissions": ["ui", "run.state"]', '"entry": "main.lua"', '"panel": { "title": "SoulLink" }',
     '"hud": true', '"tile": true', '"screen": { "title": "SoulLink" }',
     '"toggle-hud"', '"Ctrl+H"', '"doesnt-count"', '"Ctrl+D"', '"open-run"', '"Ctrl+R"',

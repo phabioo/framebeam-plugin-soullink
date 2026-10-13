@@ -36,6 +36,8 @@ local screen = require("ui.screen")
 local tile = require("ui.tile")
 local board = require("ui.board")
 local sync = require("app.sync")
+local icons_mod = require("app.icons")
+local maps_mod = require("app.maps")
 
 local A = {}
 A.__index = A
@@ -46,6 +48,8 @@ A.RENDER_MS = 250    -- at most 4 UI refreshes per second
 A.BOARD_MS = 5000    -- run board
 A.HUD_MS = 3000      -- HUD stays expanded after a linked death
 A.NOTICE_TRIES = 40  -- renders to wait for the state that shows a death
+A.MAX_ZONES = 120    -- learned zone mappings kept in the own state
+A.CAL_STEPS = { [2] = true, [10] = true, [40] = true }
 
 function A.new(fb)
   local self = setmetatable({}, A)
@@ -59,6 +63,7 @@ function A.new(fb)
   self.last_poll, self.last_box, self.last_render, self.last_board = -1e9, -1e9, -1e9, -1e9
   self.dirty = true
   self.errors = {}
+  self.unsupported = {} -- parts of pokemon.core that answered "unsupported"
   return self
 end
 
@@ -85,6 +90,8 @@ function A:start()
   self.viewing = self.run.view == true -- run view of the Runs screen: shell context, read only
   -- run view: no game, so no core calls, no tracking, no notices; only the `run` slot shows the run
   if self.viewing then self.sync:push("screen", screen.empty(tr)) end
+  self.icons = icons_mod.new(fb)
+  self.maps = maps_mod.new(fb)
   self.st = state.ensure(util.copy(fb.run.state()))
   self.last_enc = (not self.viewing and fb.run.state()) and util.encode(self.st) or nil
   self:load_events()
@@ -133,6 +140,8 @@ function A:tick()
     local ok, err = pcall(self.poll, self, full)
     if not ok then warn_once(self, "poll", "poll failed: " .. tostring(err)) end
   end
+  if not self.viewing and self.maps and self.maps:step(now) then self.dirty = true end
+  if not self.viewing and self.icons and self.icons:pump(now) then self.dirty = true end
   if self.hud_until and now >= self.hud_until then
     self.hud_until, self.hud_text = nil, nil
     self.dirty = true
@@ -149,10 +158,15 @@ end
 function A:poll(full)
   if not self:writable() then return end
   local cfg = rules.parse(self.run)
-  local snap = snapshot.from_core(self.fb, { skip_boxes = (not full) and self.boxes ~= nil, boxes = self.boxes })
+  local snap = snapshot.from_core(self.fb, { skip_boxes = (not full) and self.boxes ~= nil, boxes = self.boxes,
+    unsupported = self.unsupported })
   if snap.boxes then self.boxes = snap.boxes end
   local game = self.fb.game or {}
-  local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language } })
+  local zone = type(snap.location) == "table" and snap.location.zone or nil
+  if math.type(zone) == "float" then zone = math.tointeger(zone) end
+  self.cur_zone = math.type(zone) == "integer" and zone or nil
+  local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language },
+    zones = view_mod.merge_zones(self.run, self:states()) })
   self:commit(st, facts)
 end
 
@@ -299,7 +313,9 @@ end
 
 function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
-           events = self.events, hud_death = self.hud_until and self.hud_text or nil }
+           events = self.events, hud_death = self.hud_until and self.hud_text or nil,
+           map = self.maps and self.maps:view() or nil,
+           icon = self.icons and function(species, form) return self.icons:src(species, form) end or nil }
 end
 
 function A:render()
@@ -318,7 +334,15 @@ function A:render()
     self.sync:push("run", screen.build(ctx))
     return
   end
-  self.sync:push("panel", panel.build(ctx))
+  if self.ui.panel_run then
+    -- the panel itself shows the run view (the platform has no call that opens the screen slot)
+    local pctx = {}
+    for k, v in pairs(ctx) do pctx[k] = v end
+    pctx.compact, pctx.tab = true, self.ui.panel_tab or 1
+    self.sync:push("panel", screen.build(pctx))
+  else
+    self.sync:push("panel", panel.build(ctx))
+  end
   self.sync:push("hud", hud.build(ctx))
   self.sync:push("screen", screen.build(ctx))
 
@@ -395,10 +419,72 @@ local function field_value(field, value)
   return value
 end
 
+--- May the own state record a mapping for `zone`? Not when the static table has it or another
+--- player's mapping is in use; the own mapping can be changed; the number is limited.
+function A:can_learn(zone)
+  if oras.ZONES[zone] ~= nil then return false end
+  local own = self.st.zones and self.st.zones[tostring(zone)]
+  if own ~= nil then return true end
+  if view_mod.merge_zones(self.run, self:states())[zone] ~= nil then return false end
+  local n = 0
+  for _ in pairs(self.st.zones or {}) do n = n + 1 end
+  return n < A.MAX_ZONES
+end
+
+function A:learn_zone(st, zone, value)
+  if zone and self:can_learn(zone) then
+    st.zones = st.zones or {}
+    st.zones[tostring(zone)] = value
+  end
+end
+
 function A:set_place(input)
   if not self:writable() then return end
-  local st, fact = detect.set_place(self.st, input)
+  local st, fact = detect.set_place(self.st, input, nil, self.cur_zone)
+  local key = st.place.key
+  -- the answer for a reported zone is remembered and shared through the own state
+  if key and key ~= oras.STARTER then self:learn_zone(st, self.cur_zone, key) end
   self:commit(st, { fact })
+end
+
+-- ---------------------------------------------------------------- map setup and calibration
+
+function A:calib_route(route)
+  local c = self.ui.calib
+  if not c or not oras.route_number(route) then return end
+  local m = self.maps
+  c.route, c.msg = route, nil
+  local at = m:merged()[route]
+  c.x, c.y = at and at.x or (m.w or 0) // 2, at and at.y or (m.h or 0) // 2
+end
+
+function A:map_action(action, value)
+  local m, c = self.maps, self.ui.calib
+  if not m then return end
+  if action == "map_use" then
+    if type(value) == "string" then m:adopt(value) end
+  elseif action == "map_reset" then
+    m:reset()
+    self.ui.calib = nil
+  elseif action == "calib_toggle" then
+    self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
+  elseif c and action == "calib_route" then
+    self:calib_route(value)
+  elseif c and action == "calib_step" then
+    if A.CAL_STEPS[value] then c.step = value end
+  elseif c and action == "calib_move" and c.x then
+    local d, n = ({ l = { -1, 0 }, r = { 1, 0 }, u = { 0, -1 }, d = { 0, 1 } })[value], c.step or 10
+    if d then
+      c.x = math.max(0, math.min(m.w, c.x + d[1] * n))
+      c.y = math.max(0, math.min(m.h, c.y + d[2] * n))
+      c.msg = nil
+    end
+  elseif c and action == "calib_set" and c.route and c.x then
+    c.msg = m:set_coord(c.route, c.x, c.y) and "saved" or "failed"
+  elseif c and action == "calib_export" then
+    c.msg = m:export_line() and "exported" or "none"
+  end
+  self.dirty = true
 end
 
 -- ---------------------------------------------------------------- actions
@@ -406,7 +492,7 @@ end
 function A:on_action(action, value, slot)
   if slot == "hotkey" then
     if action == "toggle-hud" then return end -- the host shows or hides the widget
-    if action == "open-run" then action = "open_run"
+    if action == "open-run" then action = "open_run_toggle"
     elseif action == "doesnt-count" then action, value = "dc_open", nil
     else return end
   end
@@ -414,25 +500,42 @@ function A:on_action(action, value, slot)
   local me = my_player(self)
   local writable = self:writable()
 
-  if action == "open_run" then
+  if action == "open_run" or action == "open_run_toggle" then
+    -- the panel switches between the live view and the run view; the screen slot starts at its first tab
+    local open = action == "open_run" or not self.ui.panel_run
+    if open and not self.ui.panel_run then self.ui.panel_tab = 1 end
+    self.ui.panel_run = open
     self.ui.screen_tab = 1
-    self.ui.corr = self.ui.corr
     self.dirty = true
+  elseif action == "panel_back" then self.ui.panel_run = false; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
   elseif action == "tab" then
-    if math.type(value) == "integer" then self.ui.screen_tab = value; self.dirty = true end
+    if math.type(value) == "integer" then
+      if slot == "panel" then self.ui.panel_tab = value else self.ui.screen_tab = value end
+      self.dirty = true
+    end
   elseif action:sub(1, 3) == "rf:" then self.ui.routes_filter = action:sub(4); self.dirty = true
   elseif action:sub(1, 3) == "lf:" then self.ui.log_filter = action:sub(4); self.dirty = true
   elseif action == "route_select" then self.ui.selected_route = value; self.dirty = true
   elseif action == "map_select" then
     if type(value) == "table" then
-      if value.kind == "route" then self.ui.selected_route = value.id
+      if value.kind == "route" then
+        self.ui.selected_route = value.id
+        if self.ui.calib and oras.route_number(value.id) then self:calib_route(value.id) end
       elseif value.kind == "filter" then self.ui.map_filter = value.value end
       self.dirty = true
     end
+  elseif action:sub(1, 6) == "calib_" or action:sub(1, 4) == "map_" then
+    self:map_action(action, value)
   elseif not writable then
     return
+  elseif action == "zone_none" then
+    if self.cur_zone then
+      local st = util.copy(self.st)
+      self:learn_zone(st, self.cur_zone, false)
+      self:commit(st, {})
+    end
   elseif action == "place_select" then
     if type(value) == "string" then self:set_place(value) end
   elseif action == "place_text" then
@@ -503,6 +606,324 @@ function A:on_action(action, value, slot)
 end
 
 return A
+
+end
+__mod["app.icons"] = function(...)
+-- Creature icons from pokemon-core `icon(species, form)` (PNG string, or nil + "not_ready" /
+-- "unsupported"), fetched lazily and cached in the own cache as `icons/<species>-<form>.png`.
+-- The UI asks for `src(species, form)` while rendering: nil until the file is in the cache, so the
+-- builders fall back to no icon. Failures are remembered, `not_ready` is retried later with a growing delay.
+local I = {}
+I.__index = I
+
+I.CORE = "pokemon.core"
+I.PER_TICK = 3        -- core calls per tick
+I.RETRY_MS = 5000     -- first retry of "not_ready"; grows by this much per try
+I.RETRY_MAX_MS = 30000
+I.INFO_MS = 10000     -- re-check of info().features.icons while it is false
+I.MAX_BAD = 5         -- consecutive failures without any success before icons are switched off
+
+function I.new(fb)
+  return setmetatable({ fb = fb, entries = {}, queue = {}, bad = 0, ok_once = false, disabled = false,
+                        feature_ok = false, next_info = 0, errors = {} }, I)
+end
+
+local function norm(species, form)
+  if math.type(species) ~= "integer" or species < 1 or species > 100000 then return nil end
+  if math.type(form) ~= "integer" or form < 0 or form > 1000 then form = 0 end
+  return species, form
+end
+
+function I.name(species, form) return "icons/" .. species .. "-" .. form .. ".png" end
+
+--- `cache:` src of the icon when it is in the cache, else nil (and the icon is queued once).
+function I:src(species, form)
+  if self.disabled then return nil end
+  local sp, fm = norm(species, form)
+  if not sp then return nil end
+  local k = sp .. "-" .. fm
+  local e = self.entries[k]
+  if not e then
+    local name = I.name(sp, fm)
+    local okc, have = pcall(self.fb.cache.exists, name)
+    if okc and have then
+      e = { st = "have", name = name }
+    else
+      e = { st = "queued", name = name, sp = sp, fm = fm, tries = 0 }
+      self.queue[#self.queue + 1] = k
+    end
+    self.entries[k] = e
+  end
+  if e.st == "have" then return "cache:" .. e.name end
+  return nil
+end
+
+function I:fail(e, why)
+  e.st = "failed"
+  self.bad = self.bad + 1
+  if self.bad >= I.MAX_BAD and not self.ok_once then
+    self.disabled = true
+    self.fb.log.info("icons: pokemon-core provides none (" .. tostring(why) .. "), not asked again")
+  end
+end
+
+--- Fetch a few queued icons. Returns true when at least one became available.
+function I:pump(now)
+  if self.disabled then return false end
+  for k, e in pairs(self.entries) do
+    if e.st == "retry" and now >= e.at then e.st = "queued"; self.queue[#self.queue + 1] = k end
+  end
+  if #self.queue == 0 then return false end
+  if not self.feature_ok then
+    if now < self.next_info then return false end
+    local ok, info = pcall(self.fb.call, I.CORE, "info")
+    if ok and type(info) == "table" and type(info.features) == "table" and info.features.icons ~= true then
+      self.next_info = now + I.INFO_MS
+      return false
+    end
+    self.feature_ok = true -- supported, or info() unknown: just try
+  end
+  local changed = false
+  for _ = 1, I.PER_TICK do
+    local k = table.remove(self.queue, 1)
+    if not k then break end
+    local e = self.entries[k]
+    if e and e.st == "queued" then
+      local ok, png, why = pcall(self.fb.call, I.CORE, "icon", e.sp, e.fm)
+      if not ok then
+        self:fail(e, "error")
+      elseif type(png) == "string" and #png > 0 then
+        local wok = pcall(self.fb.cache.write, e.name, png)
+        if wok then
+          e.st, changed, self.ok_once, self.bad = "have", true, true, 0
+        else
+          self:fail(e, "cache")
+        end
+      elseif why == "not_ready" then
+        e.tries = e.tries + 1
+        e.st, e.at = "retry", now + math.min(I.RETRY_MS * e.tries, I.RETRY_MAX_MS)
+        break -- the core is busy: do not ask for the rest now
+      else
+        self:fail(e, why)
+      end
+    end
+  end
+  return changed
+end
+
+return I
+
+end
+__mod["app.maps"] = function(...)
+-- Region map from the player's own game: pokemon-core `map_candidates()` lists large images of the
+-- game files, `map_image(id)` returns one as PNG, `map_selected()` is the core's own pick. The
+-- player chooses one (or the core's pick is used); the choice and the image are kept in the own cache:
+--   map/choice.txt   map id of the choice ("" = none)
+--   map/region.png   the chosen image
+--   map/cand-<n>-<id>.png   previews of the candidates
+--   map/coords.json  { map = id, routes = { [route key] = { x, y } } } recorded by the player
+-- Route positions on the image are our own recorded facts (data.oras.COORDS[map id]) merged under
+-- the recorded ones. Core calls are pcalled, a few per tick.
+local util = require("model.util")
+local oras = require("data.oras")
+
+local M = {}
+M.__index = M
+
+M.CORE = "pokemon.core"
+M.REGION, M.CHOICE, M.COORDS_FILE = "map/region.png", "map/choice.txt", "map/coords.json"
+M.MAX_CANDIDATES = 24
+M.PER_TICK = 2
+M.RETRY_MS = 3000
+
+--- Width and height from a PNG header, or nil.
+function M.png_size(s)
+  if type(s) ~= "string" or #s < 24 or s:sub(1, 8) ~= "\137PNG\r\n\26\n" or s:sub(13, 16) ~= "IHDR" then return nil end
+  local w, h = string.unpack(">I4I4", s, 17)
+  if w < 1 or h < 1 or w > 16384 or h > 16384 then return nil end
+  return w, h
+end
+
+local function safe(id) return (tostring(id):gsub("[^%w_%-]", "_"):sub(1, 60)) end
+
+function M.new(fb)
+  local self = setmetatable({ fb = fb, state = "none", cands = {}, preview = {}, failed = {}, retry_at = {},
+                              coords = {}, next_at = 0 }, M)
+  self:restore()
+  return self
+end
+
+function M:read(name)
+  local ok, v = pcall(self.fb.cache.read, name)
+  return ok and v or nil
+end
+
+function M:write(name, data)
+  return (pcall(self.fb.cache.write, name, data))
+end
+
+function M:call(fn, ...)
+  local ok, a, b = pcall(self.fb.call, M.CORE, fn, ...)
+  return ok, a, b
+end
+
+--- Restore the choice and the recorded positions from the cache.
+function M:restore()
+  local choice = self:read(M.CHOICE)
+  choice = type(choice) == "string" and choice:match("^%s*(.-)%s*$") or ""
+  local png = choice ~= "" and self:read(M.REGION) or nil
+  local w, h = M.png_size(png)
+  if w then
+    self.id, self.w, self.h, self.state = choice, w, h, "ready"
+  end
+  self:load_coords()
+end
+
+function M:load_coords()
+  self.coords = {}
+  local s = self:read(M.COORDS_FILE)
+  if type(s) ~= "string" or not self.id then return end
+  local id = s:match('"map"%s*:%s*"(.-)"')
+  if id ~= self.id then return end
+  local routes = s:match('"routes"%s*:%s*(%b{})') or ""
+  for key, x, y in routes:gmatch('"([^"]+)"%s*:%s*{%s*"x"%s*:%s*(-?%d+)%s*,%s*"y"%s*:%s*(-?%d+)%s*}') do
+    if oras.is_key(key) then self.coords[key] = { x = tonumber(x), y = tonumber(y) } end
+  end
+end
+
+function M:save_coords()
+  local routes = {}
+  for key, c in pairs(self.coords) do routes[key] = { x = c.x, y = c.y } end
+  self:write(M.COORDS_FILE, util.encode({ map = self.id, routes = routes }))
+end
+
+--- Route positions: data.oras.COORDS[map id] with the recorded ones on top.
+function M:merged()
+  local out = {}
+  for key, c in pairs(self.id and oras.COORDS[self.id] or {}) do out[key] = c end
+  for key, c in pairs(self.coords) do
+    local base = out[key]
+    out[key] = { x = c.x, y = c.y, area = base and base.area or nil }
+  end
+  return out
+end
+
+--- Record the position of a route (image pixels, clamped to the image).
+function M:set_coord(route, x, y)
+  if self.state ~= "ready" or not oras.route_number(route) then return false end
+  x = math.max(0, math.min(self.w, math.floor(x + 0.5)))
+  y = math.max(0, math.min(self.h, math.floor(y + 0.5)))
+  self.coords[route] = { x = x, y = y }
+  self:save_coords()
+  return true
+end
+
+--- One Lua table line with all positions (data.oras.COORDS entry), written to the log. nil without positions.
+function M:export_line()
+  local all = self:merged()
+  local keys = {}
+  for key in pairs(all) do keys[#keys + 1] = key end
+  if #keys == 0 or not self.id then return nil end
+  table.sort(keys, oras.compare)
+  local parts = {}
+  for _, key in ipairs(keys) do
+    local c = all[key]
+    parts[#parts + 1] = string.format("[%q] = { x = %d, y = %d%s }", key, c.x, c.y,
+      c.area and string.format(", area = %q", c.area) or "")
+  end
+  local line = string.format("COORDS[%q] = { %s }", self.id, table.concat(parts, ", "))
+  self.fb.log.info("soullink positions: " .. line)
+  return line
+end
+
+--- Use the image `id` as the region map. Returns true on success.
+function M:adopt(id)
+  local png
+  local pv = self.preview[id]
+  if pv then png = self:read(pv) end
+  if not png then
+    local ok, p = self:call("map_image", id)
+    png = ok and p or nil
+  end
+  local w, h = M.png_size(png)
+  if not w then return false end
+  if not (self:write(M.REGION, png) and self:write(M.CHOICE, id)) then return false end
+  self.id, self.w, self.h, self.state = id, w, h, "ready"
+  self.cands, self.preview = {}, {}
+  self:load_coords()
+  return true
+end
+
+--- Forget the choice (the image stays in the cache); candidates are scanned again.
+function M:reset()
+  self:write(M.CHOICE, "")
+  self.id, self.w, self.h, self.state = nil, nil, nil, "none"
+  self.cands, self.preview, self.failed, self.retry_at, self.coords = {}, {}, {}, {}, {}
+  self.next_at = 0
+end
+
+--- Scan / fetch previews. Returns true when the view changed.
+function M:step(now)
+  if self.state == "ready" or self.state == "unsupported" then return false end
+  if self.state == "none" or self.state == "scanning" then
+    if now < self.next_at then return false end
+    local ok, sel = self:call("map_selected")
+    if not ok then self.state = "unsupported"; return true end
+    if type(sel) == "string" and sel ~= "" and self:adopt(sel) then return true end
+    local ok2, list, why = self:call("map_candidates")
+    if not ok2 then self.state = "unsupported"; return true end
+    if type(list) ~= "table" then
+      if why == "not_ready" then
+        local changed = self.state ~= "scanning"
+        self.state, self.next_at = "scanning", now + M.RETRY_MS
+        return changed
+      end
+      self.state = "unsupported"
+      return true
+    end
+    for _, c in ipairs(list) do
+      if #self.cands >= M.MAX_CANDIDATES then break end
+      if type(c) == "table" and type(c.id) == "string" and c.id ~= "" then
+        self.cands[#self.cands + 1] = { id = c.id, w = c.w, h = c.h }
+      end
+    end
+    self.state = "choose"
+    return true
+  end
+  -- choose: previews, a few per tick
+  local changed, n = false, 0
+  for i, c in ipairs(self.cands) do
+    if n >= M.PER_TICK then break end
+    if not self.preview[c.id] and not self.failed[c.id] and now >= (self.retry_at[c.id] or 0) then
+      n = n + 1
+      local ok, png, why = self:call("map_image", c.id)
+      local name = "map/cand-" .. i .. "-" .. safe(c.id) .. ".png"
+      if ok and type(png) == "string" and M.png_size(png) and self:write(name, png) then
+        self.preview[c.id], changed = name, true
+      elseif ok and why == "not_ready" then
+        self.retry_at[c.id] = now + M.RETRY_MS
+      else
+        self.failed[c.id], changed = true, true
+      end
+    end
+  end
+  return changed
+end
+
+--- What the UI needs: { state = none|scanning|choose|ready|unsupported, src?, w?, h?, id?,
+--- candidates = {{id, w, h, src?, failed?}}, coords }.
+function M:view()
+  local cands = {}
+  for _, c in ipairs(self.cands) do
+    local pv = self.preview[c.id]
+    cands[#cands + 1] = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = self.failed[c.id] }
+  end
+  return { state = self.state, id = self.id, w = self.w, h = self.h,
+           src = self.state == "ready" and ("cache:" .. M.REGION) or nil,
+           candidates = cands, coords = self:merged() }
+end
+
+return M
 
 end
 __mod["app.sync"] = function(...)
@@ -587,26 +1008,22 @@ for n = M.FIRST_ROUTE, M.LAST_ROUTE do
   M.ROUTE_KEYS[#M.ROUTE_KEYS + 1] = "route-" .. n
 end
 
---- zone id -> route key (string) or false (known zone that is not a route, e.g. a town).
---- EMPTY on purpose: filled once pokemon-core reports ORAS locations (location() is not
---- implemented there yet). Until then the place comes from manual input.
-M.ZONE_TO_ROUTE = {}
+--- zone id (pokemon-core `location().zone`) -> route key (string) or false (known zone that is not a
+--- route, e.g. a town). EMPTY on purpose: the table is unknown until recorded with the real game.
+--- Meanwhile zones are learned at runtime: the answer of a player is kept in the own run state
+--- (`zones`) and merged across all players (model.view.merge_zones).
+M.ZONES = {}
+M.ZONE_TO_ROUTE = M.ZONES -- old name
 
---- Route key -> { x, y, area? } on the region map image (image coordinates). EMPTY on purpose:
---- the map image and its coordinates are read from the player's own game file at runtime, which is
---- not implemented yet. While empty, the screen hides the Map tab.
+--- Route positions on the region map image, keyed by the map id that pokemon-core reports
+--- (`map_candidates()` / `map_selected()`): COORDS[map id][route key] = { x, y, area? } in image
+--- pixels. Our own recorded facts, EMPTY for now: positions are recorded in the Map tab
+--- ("Place routes") and exported with "Export positions".
 M.COORDS = {}
-M.MAP_SIZE = nil -- { w, h } of the map image once known
 
 --- Level cap hint by number of badges owned: LEVEL_CAPS[badges] = cap of the next gym.
 --- VERIFY LOCALLY against the real game before relying on it; hints only, never blocking.
 M.LEVEL_CAPS = { [0] = 15, 19, 24, 29, 31, 33, 42, 43 }
-
---- Route key -> { x, y, area? } on the region map image (image coordinates). EMPTY on purpose:
---- the map image and its coordinates are read from the player's own game file at runtime, which is
---- not implemented yet. While empty, the screen hides the Map tab.
-M.COORDS = {}
-M.MAP_SIZE = nil -- { w, h } of the map image once known
 
 --- Level cap hint for `badges` badges, or nil when unknown (for example all eight badges).
 function M.level_cap(badges)
@@ -873,17 +1290,30 @@ local function owns_line(st, species, family)
   return false
 end
 
+local function zone_id(z)
+  if math.type(z) == "float" and z == math.floor(z) then z = math.tointeger(z) end
+  if math.type(z) == "integer" then return z end
+  return nil
+end
+
+--- Place from the reported zone. A mapped zone sets the place automatically (manual = false). A
+--- manual place wins for as long as the zone stays the same; when the zone changes, the zone table
+--- decides again. An unmapped zone leaves the key empty (the UI asks which route this is).
 local function update_place(st, loc, facts, zones)
-  if type(loc) ~= "table" or loc.zone == nil then return end
+  local zone = type(loc) == "table" and zone_id(loc.zone)
+  if not zone then return end
   local old = st.place or { manual = false }
-  local mapped = zones[loc.zone]
+  if old.manual and (old.zone == nil or old.zone == zone) then
+    old.zone = zone -- remember the zone the manual place belongs to
+    st.place = old
+    return
+  end
+  local mapped = zones[zone]
   local new
   if mapped ~= nil then
-    new = { key = mapped or nil, name = loc.name, zone = loc.zone, manual = false }
-  elseif old.manual then
-    return -- unknown zone: keep what the user set by hand
+    new = { key = mapped or nil, name = loc.name, zone = zone, manual = false }
   else
-    new = { name = loc.name, zone = loc.zone, manual = false }
+    new = { name = loc.name, zone = zone, manual = false }
   end
   if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or old.manual then
     st.place = new
@@ -896,15 +1326,18 @@ end
 
 --- Set the place by hand. `input` is a route key ("route-104", "starter", "place:<text>") or free
 --- text typed by the user (becomes "place:<text>"); nil/"" clears the place. `name` is optional
---- display text. Returns the new state and a place fact (or nil when nothing changed).
-function D.set_place(prev, input, name)
+--- display text, `zone` the zone the player is in right now (nil when the core reports none): the
+--- manual place wins until the zone changes. Returns the new state and a place fact (nil when
+--- nothing changed).
+function D.set_place(prev, input, name, zone)
   local st = state.ensure(util.copy(prev))
   local old = st.place or { manual = false }
   local key
   if input ~= nil and input ~= "" then
     key = oras.is_key(input) and input or oras.custom_key(input)
   end
-  st.place = { key = key, name = name, manual = true }
+  zone = zone_id(zone) or (old.manual and old.zone) or nil
+  st.place = { key = key, name = name, zone = zone, manual = true }
   if key == old.key and name == old.name and old.manual then return st, nil end
   return st, { kind = "place", key = key, name = name, manual = true, previous = old.key }
 end
@@ -978,7 +1411,7 @@ end
 ---   snap  see the snapshot description above
 ---   cfg   result of rules.parse (or flat rule flags)
 ---   opts  { family = function(species) -> family id (default: species itself),
----           zones = zone -> route key table (default data.oras.ZONE_TO_ROUTE),
+---           zones = zone -> route key table (default data.oras.ZONES),
 ---           first = "auto"|"baseline"|"starter" (what the first complete snapshot means),
 ---           game = { id, language } }
 --- Tracking starts with the first snapshot where team and boxes are both known: then either
@@ -996,7 +1429,7 @@ function D.diff(prev, snap, cfg, opts)
     st.game.language = st.game.language or opts.game.language
   end
 
-  update_place(st, snap.location, facts, opts.zones or oras.ZONE_TO_ROUTE)
+  update_place(st, snap.location, facts, opts.zones or oras.ZONES)
   local b = badge_count(snap.badges)
   if b then st.badges = b end
 
@@ -1283,6 +1716,8 @@ P.INTERFACE = "pokemon.core"
 --- collect(call) -> snapshot, issues
 ---   call(fn, ...) returns what pokemon.core's `fn` returns (see from_core). Errors are caught.
 ---   issues = { team = reason?, boxes = reason?, location = ..., battle = ..., encounters = ..., badges = ... }
+--- opts.unsupported: table kept by the caller; a part the core answers with "unsupported" is recorded
+--- there and not asked again.
 --- opts.skip_boxes: do not read the boxes, use opts.boxes (the last complete read) instead.
 --- Box numbers run 1..box_count() (assumption; the core documents box(n) without a base: open).
 function P.collect(call, opts)
@@ -1294,7 +1729,9 @@ function P.collect(call, opts)
     return a, b
   end
   local function part(name, fn, ...)
+    if opts.unsupported and opts.unsupported[name] then issues[name] = "unsupported"; return end
     local v, why = ask(fn, ...)
+    if why == "unsupported" and opts.unsupported then opts.unsupported[name] = true end
     if type(v) == "table" or (name == "badges" and type(v) == "number") then
       snap[name] = v
     else
@@ -1708,6 +2145,30 @@ end
 ---   events  run events (fb.run.events), ascending by seq; other event types are ignored
 ---   cfg     rules.parse() result; nil = parse from `run`
 --- See docs/architecture.md for the result fields.
+--- Zone table merged over all players: static `data.oras.ZONES` first, then the states' learned
+--- `zones` (zone id as string -> route key | false). The own state (run.me) wins over the others,
+--- the others are taken in user id order. Returns zone (integer) -> route key | false.
+function V.merge_zones(run, states)
+  local out = {}
+  for z, v in pairs(oras.ZONES) do out[z] = v end
+  local ids = {}
+  for id in pairs(states or {}) do if id ~= run.me then ids[#ids + 1] = id end end
+  table.sort(ids)
+  table.insert(ids, 1, run.me)
+  local seen = {}
+  for _, id in ipairs(ids) do
+    local zs = states and states[id] and states[id].zones
+    if type(zs) == "table" then
+      for k, v in pairs(zs) do
+        local z = math.tointeger(tonumber(k))
+        local ok = v == false or (type(v) == "string" and v ~= oras.STARTER and oras.is_key(v))
+        if z and ok and oras.ZONES[z] == nil and not seen[z] then out[z], seen[z] = v, true end
+      end
+    end
+  end
+  return out
+end
+
 function V.view(run, states, events, cfg)
   run, states = run or {}, states or {}
   cfg = cfg and rules.normalize(cfg) or rules.parse(run)
@@ -1984,6 +2445,7 @@ function V.view(run, states, events, cfg)
   return {
     mode = cfg.mode, rules = cfg.rules, players = out_players, rows = rows, groups = group_views,
     graveyard = graveyard, stats = stats, hints = hints, invalid_corrections = invalid,
+    zones = V.merge_zones(run, states),
   }
 end
 
@@ -2062,6 +2524,20 @@ local C = {}
 function C.mon_name(m)
   if m and type(m.nickname) == "string" and m.nickname ~= "" then return m.nickname end
   return "#" .. tostring(m and m.species or "?")
+end
+
+--- `cache:` src of the creature icon (pokemon-core icon, fetched lazily by the controller), or nil.
+function C.icon(ctx, species, form)
+  if type(ctx.icon) ~= "function" then return nil end
+  return ctx.icon(species, form)
+end
+
+--- `image` block for a mon (alive or dead state), or nil while there is no icon.
+function C.icon_block(ctx, id, m, owner, size)
+  local src = C.icon(ctx, m.species, m.form)
+  if not src then return nil end
+  return { type = "image", id = id, src = src, size = size or "s", state = m.dead and "dead" or "alive",
+           owner = owner, label = C.mon_name(m) }
 end
 
 --- Player number 1..8 (identity color): participant color 0..7 + 1, else the list position.
@@ -2403,6 +2879,12 @@ local function location(ctx, me)
     status = common.loc_status(status), children = kids }
 end
 
+--- The core reports a zone that no player has mapped to a route yet (and the player has not decided).
+local function needs_zone(ctx, me)
+  local z = me.place.zone
+  return z ~= nil and me.place.key == nil and not me.place.manual and ctx.view.zones[z] == nil
+end
+
 local function place_picker(ctx, me)
   local tr = ctx.tr
   local opts = { { value = oras.STARTER, label = oras.label(oras.STARTER, tr) } }
@@ -2415,6 +2897,12 @@ local function place_picker(ctx, me)
     { type = "textfield", id = "place-text", action = "place_text", placeholder = tr("place_other"), text = "" },
   }
   if ctx.readonly then return nil end
+  if needs_zone(ctx, me) then
+    kids[#kids + 1] = { type = "button", id = "zone-none", label = tr("zone_not_route"), action = "zone_none", variant = "quiet" }
+    return { type = "card", id = "zone-new", title = tr("zone_new_title"), children = {
+      { type = "text", id = "zone-new-text", text = tr("zone_new_text"), style = "meta" },
+      { type = "column", id = "place-picker", gap = 4, children = kids } } }
+  end
   return { type = "column", id = "place-picker", gap = 4, children = kids }
 end
 
@@ -2436,7 +2924,10 @@ local function team(ctx, me)
   for i, m in ipairs(me.team) do
     local title = common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
     if m.dead then title = "✕ " .. title end
-    local c = { { type = "text", id = "m-t" .. i, text = title, style = "body", tone = m.dead and "neutral" or nil } }
+    local head = { type = "text", id = "m-t" .. i, text = title, style = "body", tone = m.dead and "neutral" or nil }
+    local icon = common.icon_block(ctx, "m-i" .. i, m, common.color(me, common.index_of(ctx.view, me.id)), "s")
+    if icon then head = { type = "row", id = "m-h" .. i, gap = 8, align = "center", children = { icon, head } } end
+    local c = { head }
     local ratio = (not m.dead) and common.hp_ratio(m)
     if ratio then
       c[#c + 1] = { type = "bar", id = "m-hp" .. i, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) }
@@ -2474,7 +2965,7 @@ local function graveyard(ctx)
   if open then
     local rows = {}
     for i, g in ipairs(view.graveyard) do
-      rows[i] = { id = "g" .. i, title = "✕ " .. common.mon_name(g),
+      rows[i] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), image = common.icon(ctx, g.species, g.form),
         sub = tr("grave_sub", { route = g.route and oras.label(g.route, tr) or "?", player = common.name_of(view, g.owner) }),
         tone = "neutral" }
     end
@@ -2521,8 +3012,9 @@ return M
 
 end
 __mod["ui.screen"] = function(...)
--- Run screen (design 5e), shown in the in-game screen slot: tabs Routes | Team & box | Graveyard |
--- Event log (Map first only when route coordinates exist: drawn default F hides it otherwise).
+-- Run screen (design 5e), shown in the in-game screen slot and, with ctx.compact, in the panel:
+-- tabs Map | Routes | Team & box | Graveyard | Event log. The Map tab comes first once the map
+-- setup (app.maps) has something to show: scanning, the candidate list or the chosen image.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -2535,7 +3027,8 @@ function M.empty(tr)
   return { type = "column", gap = 12, children = { common.empty(tr, "empty_title", "empty_screen") } }
 end
 
-function M.has_map() return next(oras.COORDS) ~= nil end
+local MAP_STATES = { ready = true, choose = true, scanning = true }
+function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and MAP_STATES[ctx.map.state] == true end
 
 local function header(ctx)
   local tr, view, run = ctx.tr, ctx.view, ctx.run
@@ -2580,6 +3073,14 @@ local function route_detail(ctx)
   local g = row.group
   local kids = { { type = "text", id = "rd-status", text = common.group_state_text(g, tr) .. (g and g.number and (" · " .. tr("group_n", { n = g.number })) or ""),
     style = "meta" } }
+  local icons = {}
+  for i, p in ipairs(view.players) do
+    local cell = row.cells[p.id]
+    local ic = cell and cell.species and common.icon_block(ctx, "rd-i" .. i, { species = cell.species, nickname = cell.nickname,
+      dead = cell.state == "dead" }, common.color(p, i), "m")
+    if ic then icons[#icons + 1] = ic end
+  end
+  if #icons > 0 then kids[#kids + 1] = { type = "row", id = "rd-icons", gap = 8, children = icons } end
   if not ctx.readonly then
     local acts = {
       { type = "button", id = "rd-missed", label = tr("mark_missed"), action = "missed_open", value = route, variant = "quiet" },
@@ -2604,14 +3105,14 @@ local function routes_page(ctx)
   for _, r in ipairs(view.rows) do if r.done then n_done = n_done + 1 else n_open = n_open + 1 end end
   local columns = { tr("col_route") }
   for _, p in ipairs(view.players) do columns[#columns + 1] = p.name end
-  columns[#columns + 1] = tr("col_group")
+  if not ctx.compact then columns[#columns + 1] = tr("col_group") end
   columns[#columns + 1] = tr("col_status")
   local rows = {}
   for _, r in ipairs(view.rows) do
     if filter == "all" or (filter == "open" and not r.done) or (filter == "done" and r.done) then
       local cells = { oras.label(r.route, tr) }
       for _, p in ipairs(view.players) do cells[#cells + 1] = common.cell_text(r.cells[p.id], tr) end
-      cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or "—"
+      if not ctx.compact then cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or "—" end
       cells[#cells + 1] = common.group_state_text(r.group, tr)
       rows[#rows + 1] = { cells = cells, action = "route_select", value = r.route }
     end
@@ -2643,7 +3144,10 @@ local function team_page(ctx)
     local kids = {}
     for j, m in ipairs(p.team) do
       local title = (m.dead and "✕ " or "") .. common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
-      local c = { { type = "text", id = "tm" .. i .. "-" .. j, text = title, style = "body" } }
+      local head = { type = "text", id = "tm" .. i .. "-" .. j, text = title, style = "body" }
+      local icon = common.icon_block(ctx, "tm-i" .. i .. "-" .. j, m, common.color(p, i), "s")
+      if icon then head = { type = "row", id = "tm-h" .. i .. "-" .. j, gap = 8, align = "center", children = { icon, head } } end
+      local c = { head }
       local ratio = (not m.dead) and common.hp_ratio(m)
       if ratio then c[#c + 1] = { type = "bar", id = "tm-hp" .. i .. "-" .. j, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) } end
       if p.id == ctx.me and not ctx.readonly then
@@ -2660,7 +3164,7 @@ local function team_page(ctx)
     for _, id in ipairs(p.ids) do
       local m = p.mons[id]
       if m.where == "box" then
-        rows[#rows + 1] = { id = "b" .. id, title = (m.dead and "✕ " or "") .. common.mon_name(m),
+        rows[#rows + 1] = { id = "b" .. id, title = (m.dead and "✕ " or "") .. common.mon_name(m), image = common.icon(ctx, m.species, m.form),
           sub = m.route and oras.label(m.route, tr) or nil, tone = m.dead and "neutral" or nil }
       end
     end
@@ -2678,14 +3182,16 @@ local function graveyard_page(ctx)
     return { type = "column", id = "page-grave", gap = 12, children = { { type = "text", id = "grave-empty", text = tr("grave_empty"), style = "meta" } } }
   end
   local rows = {}
-  for _, g in ipairs(view.graveyard) do
+  for i, g in ipairs(view.graveyard) do
     local cause = g.doa and tr("cause_doa") or tr("cause_" .. tostring(g.cause))
-    rows[#rows + 1] = { cells = { common.mon_name(g), common.name_of(view, g.owner), g.route and oras.label(g.route, tr) or "—",
-      cause, g.group_number and tr("group_n", { n = g.group_number }) or "—" },
+    local parts = { common.name_of(view, g.owner), g.route and oras.label(g.route, tr) or "—", cause }
+    if g.group_number then parts[#parts + 1] = tr("group_n", { n = g.group_number }) end
+    rows[#rows + 1] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), sub = table.concat(parts, " · "),
+      image = common.icon(ctx, g.species, g.form), tone = "neutral",
       action = g.group and "undo_open" or nil, value = g.group }
   end
   return { type = "column", id = "page-grave", gap = 12, children = {
-    { type = "table", id = "grave-table", columns = { tr("col_creature"), tr("col_owner"), tr("col_route"), tr("col_cause"), tr("col_group") }, rows = rows },
+    { type = "list", id = "grave-list", rows = rows },
     { type = "text", id = "grave-hint", text = tr("grave_hint"), style = "meta" },
   } }
 end
@@ -2722,41 +3228,119 @@ local function log_page(ctx)
   return { type = "column", id = "page-log", gap = 12, children = kids }
 end
 
+local STEPS = { 2, 10, 40 }
+
+local function calibration(ctx, m)
+  local tr, c = ctx.tr, ctx.ui.calib
+  local opts = {}
+  for _, k in ipairs(oras.ROUTE_KEYS) do opts[#opts + 1] = { value = k, label = oras.label(k, tr) } end
+  local steps = {}
+  for _, n in ipairs(STEPS) do steps[#steps + 1] = { value = n, label = tr("calib_px", { n = n }) } end
+  local kids = {
+    { type = "text", id = "calib-hint", text = tr("calib_hint"), style = "meta" },
+    { type = "select", id = "calib-route", options = opts, selected = c.route, action = "calib_route" },
+    { type = "segmented", id = "calib-step", options = steps, selected = c.step or 10, action = "calib_step" },
+  }
+  if c.x then
+    kids[#kids + 1] = { type = "text", id = "calib-pos", text = tr("calib_pos", { x = c.x, y = c.y }), style = "meta" }
+    kids[#kids + 1] = { type = "row", id = "calib-arrows", gap = 8, children = {
+      { type = "button", id = "calib-l", label = "←", action = "calib_move", value = "l", variant = "secondary" },
+      { type = "button", id = "calib-u", label = "↑", action = "calib_move", value = "u", variant = "secondary" },
+      { type = "button", id = "calib-r", label = "→", action = "calib_move", value = "r", variant = "secondary" },
+      { type = "button", id = "calib-d", label = "↓", action = "calib_move", value = "d", variant = "secondary" },
+    } }
+    kids[#kids + 1] = { type = "button", id = "calib-set", label = tr("calib_set"), action = "calib_set", variant = "primary" }
+  end
+  if c.msg then kids[#kids + 1] = { type = "text", id = "calib-msg", text = tr("calib_msg_" .. c.msg), style = "meta" } end
+  kids[#kids + 1] = { type = "row", id = "calib-acts", gap = 8, children = {
+    { type = "button", id = "calib-export", label = tr("calib_export"), action = "calib_export", variant = "secondary" },
+    { type = "button", id = "calib-done", label = tr("calib_done"), action = "calib_toggle", variant = "quiet" },
+  } }
+  return { type = "section", id = "calib", title = tr("calib_title"), children = kids }
+end
+
+local function candidates(ctx, m)
+  local tr = ctx.tr
+  local kids = { { type = "text", id = "mc-hint", text = tr("map_choose_hint"), style = "meta" } }
+  if #m.candidates == 0 then
+    kids[#kids + 1] = { type = "text", id = "mc-none", text = tr("map_none"), style = "meta" }
+  end
+  for i, c in ipairs(m.candidates) do
+    local row = {}
+    if c.src then row[#row + 1] = { type = "image", id = "mc-img" .. i, src = c.src, size = "l", label = tr("map_cand", { n = i }) } end
+    row[#row + 1] = { type = "column", id = "mc-col" .. i, gap = 4, children = {
+      { type = "text", id = "mc-t" .. i, text = tr("map_cand_size", { n = i, w = c.w or "?", h = c.h or "?" }), style = "body" },
+      { type = "button", id = "mc-use" .. i, label = tr("map_use"), action = "map_use", value = c.id, variant = "secondary" },
+    } }
+    kids[#kids + 1] = { type = "row", id = "mc-row" .. i, gap = 12, align = "center", children = row }
+  end
+  return kids
+end
+
 local function map_page(ctx)
-  local view = ctx.view
-  local players, routes = {}, {}
+  local view, m, tr = ctx.view, ctx.map, ctx.tr
+  if m.state ~= "ready" then
+    if m.state == "choose" then
+      return { type = "column", id = "page-map", gap = 12, children = candidates(ctx, m) }
+    end
+    return { type = "column", id = "page-map", gap = 12, children = {
+      { type = "empty", id = "map-scan", title = tr("map_scanning") } } }
+  end
+  local players, routes, shown = {}, {}, {}
   for i, p in ipairs(view.players) do
-    local c = p.place.key and oras.COORDS[p.place.key]
+    local c = p.place.key and m.coords[p.place.key]
     if c then
       players[#players + 1] = { id = p.id, initial = common.initial(p.name), color = common.color(p, i), x = c.x, y = c.y }
     end
   end
-  for _, r in ipairs(view.rows) do
-    local c = oras.COORDS[r.route]
-    if c then
-      routes[#routes + 1] = { id = r.route, x = c.x, y = c.y, area = c.area, number = r.group and r.group.number or nil, done = r.done }
+  local function route_marker(key)
+    local c = m.coords[key]
+    local r = common.row_of(view, key)
+    local icons = {}
+    if r then
+      for i, p in ipairs(view.players) do
+        local cell = r.cells[p.id]
+        local src = cell and cell.species and common.icon(ctx, cell.species, nil)
+        if src and #icons < 8 then icons[#icons + 1] = { src = src, owner = common.color(p, i) } end
+      end
     end
+    routes[#routes + 1] = { id = key, x = c.x, y = c.y, area = c.area, number = r and r.group and r.group.number or nil,
+      done = r and r.done or false, icons = #icons > 0 and icons or nil }
+  end
+  for _, r in ipairs(view.rows) do
+    if m.coords[r.route] then route_marker(r.route); shown[r.route] = true end
+  end
+  for _, key in ipairs(oras.ROUTE_KEYS) do
+    if m.coords[key] and not shown[key] then route_marker(key) end
+  end
+  local calib = ctx.ui.calib
+  if calib and calib.x then
+    players[#players + 1] = { id = "cursor", initial = "+", color = 1, x = calib.x, y = calib.y }
   end
   local map = { type = "map", id = "map", players = players, routes = routes, filter = ctx.ui.map_filter or "all",
-    me = ctx.me, legend = true, action = "map_select" }
-  if ctx.ui.map_src and oras.MAP_SIZE then
-    map.image, map.image_w, map.image_h = ctx.ui.map_src, oras.MAP_SIZE.w, oras.MAP_SIZE.h
-  end
+    me = ctx.me, legend = true, action = "map_select", image = m.src, image_w = m.w, image_h = m.h }
   if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
-  return { type = "column", id = "page-map", gap = 12, children = { map } }
+  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = {
+    { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
+      variant = calib and "primary" or "quiet" },
+    { type = "button", id = "map-change", label = tr("map_change"), action = "map_reset", variant = "quiet",
+      confirm = { title = tr("map_change_title"), text = tr("map_change_text"), confirm_label = tr("map_change") } },
+  } } }
+  if calib then kids[#kids + 1] = calibration(ctx, m) end
+  return { type = "column", id = "page-map", gap = 12, children = kids }
 end
 
 --- Tab order for the current data: { "map"? , "routes", "team", "grave", "log" }.
-function M.tab_ids()
+function M.tab_ids(ctx)
   local ids = {}
-  if M.has_map() then ids[#ids + 1] = "map" end
+  if M.has_map(ctx) then ids[#ids + 1] = "map" end
   for _, id in ipairs({ "routes", "team", "grave", "log" }) do ids[#ids + 1] = id end
   return ids
 end
 
 function M.build(ctx)
   local tr, view = ctx.tr, ctx.view
-  local ids = M.tab_ids()
+  local ids = M.tab_ids(ctx)
   local labels, pages = {}, {}
   local counts = { routes = #view.rows, grave = #view.graveyard, log = #(ctx.events or {}) }
   for i, id in ipairs(ids) do
@@ -2764,8 +3348,12 @@ function M.build(ctx)
     local builders = { map = map_page, routes = routes_page, team = team_page, grave = graveyard_page, log = log_page }
     pages[i] = builders[id](ctx)
   end
-  local sel = math.min(math.max(ctx.ui.screen_tab or 1, 1), #ids)
-  local kids = { header(ctx) }
+  local sel = math.min(math.max(ctx.tab or ctx.ui.screen_tab or 1, 1), #ids)
+  local kids = {}
+  if ctx.compact then
+    kids[1] = { type = "button", id = "back", label = tr("back"), action = "panel_back", variant = "quiet" }
+  end
+  kids[#kids + 1] = header(ctx)
   local corr = corr_ui.section(ctx)
   if corr then kids[#kids + 1] = corr end
   kids[#kids + 1] = { type = "tabs", id = "tabs", tabs = labels, selected = sel, action = "tab", children = pages }

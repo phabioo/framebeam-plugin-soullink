@@ -1,5 +1,6 @@
--- Run screen (design 5e), shown in the in-game screen slot: tabs Routes | Team & box | Graveyard |
--- Event log (Map first only when route coordinates exist: drawn default F hides it otherwise).
+-- Run screen (design 5e), shown in the in-game screen slot and, with ctx.compact, in the panel:
+-- tabs Map | Routes | Team & box | Graveyard | Event log. The Map tab comes first once the map
+-- setup (app.maps) has something to show: scanning, the candidate list or the chosen image.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -12,7 +13,8 @@ function M.empty(tr)
   return { type = "column", gap = 12, children = { common.empty(tr, "empty_title", "empty_screen") } }
 end
 
-function M.has_map() return next(oras.COORDS) ~= nil end
+local MAP_STATES = { ready = true, choose = true, scanning = true }
+function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and MAP_STATES[ctx.map.state] == true end
 
 local function header(ctx)
   local tr, view, run = ctx.tr, ctx.view, ctx.run
@@ -57,6 +59,14 @@ local function route_detail(ctx)
   local g = row.group
   local kids = { { type = "text", id = "rd-status", text = common.group_state_text(g, tr) .. (g and g.number and (" · " .. tr("group_n", { n = g.number })) or ""),
     style = "meta" } }
+  local icons = {}
+  for i, p in ipairs(view.players) do
+    local cell = row.cells[p.id]
+    local ic = cell and cell.species and common.icon_block(ctx, "rd-i" .. i, { species = cell.species, nickname = cell.nickname,
+      dead = cell.state == "dead" }, common.color(p, i), "m")
+    if ic then icons[#icons + 1] = ic end
+  end
+  if #icons > 0 then kids[#kids + 1] = { type = "row", id = "rd-icons", gap = 8, children = icons } end
   if not ctx.readonly then
     local acts = {
       { type = "button", id = "rd-missed", label = tr("mark_missed"), action = "missed_open", value = route, variant = "quiet" },
@@ -81,14 +91,14 @@ local function routes_page(ctx)
   for _, r in ipairs(view.rows) do if r.done then n_done = n_done + 1 else n_open = n_open + 1 end end
   local columns = { tr("col_route") }
   for _, p in ipairs(view.players) do columns[#columns + 1] = p.name end
-  columns[#columns + 1] = tr("col_group")
+  if not ctx.compact then columns[#columns + 1] = tr("col_group") end
   columns[#columns + 1] = tr("col_status")
   local rows = {}
   for _, r in ipairs(view.rows) do
     if filter == "all" or (filter == "open" and not r.done) or (filter == "done" and r.done) then
       local cells = { oras.label(r.route, tr) }
       for _, p in ipairs(view.players) do cells[#cells + 1] = common.cell_text(r.cells[p.id], tr) end
-      cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or "—"
+      if not ctx.compact then cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or "—" end
       cells[#cells + 1] = common.group_state_text(r.group, tr)
       rows[#rows + 1] = { cells = cells, action = "route_select", value = r.route }
     end
@@ -120,7 +130,10 @@ local function team_page(ctx)
     local kids = {}
     for j, m in ipairs(p.team) do
       local title = (m.dead and "✕ " or "") .. common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
-      local c = { { type = "text", id = "tm" .. i .. "-" .. j, text = title, style = "body" } }
+      local head = { type = "text", id = "tm" .. i .. "-" .. j, text = title, style = "body" }
+      local icon = common.icon_block(ctx, "tm-i" .. i .. "-" .. j, m, common.color(p, i), "s")
+      if icon then head = { type = "row", id = "tm-h" .. i .. "-" .. j, gap = 8, align = "center", children = { icon, head } } end
+      local c = { head }
       local ratio = (not m.dead) and common.hp_ratio(m)
       if ratio then c[#c + 1] = { type = "bar", id = "tm-hp" .. i .. "-" .. j, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) } end
       if p.id == ctx.me and not ctx.readonly then
@@ -137,7 +150,7 @@ local function team_page(ctx)
     for _, id in ipairs(p.ids) do
       local m = p.mons[id]
       if m.where == "box" then
-        rows[#rows + 1] = { id = "b" .. id, title = (m.dead and "✕ " or "") .. common.mon_name(m),
+        rows[#rows + 1] = { id = "b" .. id, title = (m.dead and "✕ " or "") .. common.mon_name(m), image = common.icon(ctx, m.species, m.form),
           sub = m.route and oras.label(m.route, tr) or nil, tone = m.dead and "neutral" or nil }
       end
     end
@@ -155,14 +168,16 @@ local function graveyard_page(ctx)
     return { type = "column", id = "page-grave", gap = 12, children = { { type = "text", id = "grave-empty", text = tr("grave_empty"), style = "meta" } } }
   end
   local rows = {}
-  for _, g in ipairs(view.graveyard) do
+  for i, g in ipairs(view.graveyard) do
     local cause = g.doa and tr("cause_doa") or tr("cause_" .. tostring(g.cause))
-    rows[#rows + 1] = { cells = { common.mon_name(g), common.name_of(view, g.owner), g.route and oras.label(g.route, tr) or "—",
-      cause, g.group_number and tr("group_n", { n = g.group_number }) or "—" },
+    local parts = { common.name_of(view, g.owner), g.route and oras.label(g.route, tr) or "—", cause }
+    if g.group_number then parts[#parts + 1] = tr("group_n", { n = g.group_number }) end
+    rows[#rows + 1] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), sub = table.concat(parts, " · "),
+      image = common.icon(ctx, g.species, g.form), tone = "neutral",
       action = g.group and "undo_open" or nil, value = g.group }
   end
   return { type = "column", id = "page-grave", gap = 12, children = {
-    { type = "table", id = "grave-table", columns = { tr("col_creature"), tr("col_owner"), tr("col_route"), tr("col_cause"), tr("col_group") }, rows = rows },
+    { type = "list", id = "grave-list", rows = rows },
     { type = "text", id = "grave-hint", text = tr("grave_hint"), style = "meta" },
   } }
 end
@@ -199,41 +214,119 @@ local function log_page(ctx)
   return { type = "column", id = "page-log", gap = 12, children = kids }
 end
 
+local STEPS = { 2, 10, 40 }
+
+local function calibration(ctx, m)
+  local tr, c = ctx.tr, ctx.ui.calib
+  local opts = {}
+  for _, k in ipairs(oras.ROUTE_KEYS) do opts[#opts + 1] = { value = k, label = oras.label(k, tr) } end
+  local steps = {}
+  for _, n in ipairs(STEPS) do steps[#steps + 1] = { value = n, label = tr("calib_px", { n = n }) } end
+  local kids = {
+    { type = "text", id = "calib-hint", text = tr("calib_hint"), style = "meta" },
+    { type = "select", id = "calib-route", options = opts, selected = c.route, action = "calib_route" },
+    { type = "segmented", id = "calib-step", options = steps, selected = c.step or 10, action = "calib_step" },
+  }
+  if c.x then
+    kids[#kids + 1] = { type = "text", id = "calib-pos", text = tr("calib_pos", { x = c.x, y = c.y }), style = "meta" }
+    kids[#kids + 1] = { type = "row", id = "calib-arrows", gap = 8, children = {
+      { type = "button", id = "calib-l", label = "←", action = "calib_move", value = "l", variant = "secondary" },
+      { type = "button", id = "calib-u", label = "↑", action = "calib_move", value = "u", variant = "secondary" },
+      { type = "button", id = "calib-r", label = "→", action = "calib_move", value = "r", variant = "secondary" },
+      { type = "button", id = "calib-d", label = "↓", action = "calib_move", value = "d", variant = "secondary" },
+    } }
+    kids[#kids + 1] = { type = "button", id = "calib-set", label = tr("calib_set"), action = "calib_set", variant = "primary" }
+  end
+  if c.msg then kids[#kids + 1] = { type = "text", id = "calib-msg", text = tr("calib_msg_" .. c.msg), style = "meta" } end
+  kids[#kids + 1] = { type = "row", id = "calib-acts", gap = 8, children = {
+    { type = "button", id = "calib-export", label = tr("calib_export"), action = "calib_export", variant = "secondary" },
+    { type = "button", id = "calib-done", label = tr("calib_done"), action = "calib_toggle", variant = "quiet" },
+  } }
+  return { type = "section", id = "calib", title = tr("calib_title"), children = kids }
+end
+
+local function candidates(ctx, m)
+  local tr = ctx.tr
+  local kids = { { type = "text", id = "mc-hint", text = tr("map_choose_hint"), style = "meta" } }
+  if #m.candidates == 0 then
+    kids[#kids + 1] = { type = "text", id = "mc-none", text = tr("map_none"), style = "meta" }
+  end
+  for i, c in ipairs(m.candidates) do
+    local row = {}
+    if c.src then row[#row + 1] = { type = "image", id = "mc-img" .. i, src = c.src, size = "l", label = tr("map_cand", { n = i }) } end
+    row[#row + 1] = { type = "column", id = "mc-col" .. i, gap = 4, children = {
+      { type = "text", id = "mc-t" .. i, text = tr("map_cand_size", { n = i, w = c.w or "?", h = c.h or "?" }), style = "body" },
+      { type = "button", id = "mc-use" .. i, label = tr("map_use"), action = "map_use", value = c.id, variant = "secondary" },
+    } }
+    kids[#kids + 1] = { type = "row", id = "mc-row" .. i, gap = 12, align = "center", children = row }
+  end
+  return kids
+end
+
 local function map_page(ctx)
-  local view = ctx.view
-  local players, routes = {}, {}
+  local view, m, tr = ctx.view, ctx.map, ctx.tr
+  if m.state ~= "ready" then
+    if m.state == "choose" then
+      return { type = "column", id = "page-map", gap = 12, children = candidates(ctx, m) }
+    end
+    return { type = "column", id = "page-map", gap = 12, children = {
+      { type = "empty", id = "map-scan", title = tr("map_scanning") } } }
+  end
+  local players, routes, shown = {}, {}, {}
   for i, p in ipairs(view.players) do
-    local c = p.place.key and oras.COORDS[p.place.key]
+    local c = p.place.key and m.coords[p.place.key]
     if c then
       players[#players + 1] = { id = p.id, initial = common.initial(p.name), color = common.color(p, i), x = c.x, y = c.y }
     end
   end
-  for _, r in ipairs(view.rows) do
-    local c = oras.COORDS[r.route]
-    if c then
-      routes[#routes + 1] = { id = r.route, x = c.x, y = c.y, area = c.area, number = r.group and r.group.number or nil, done = r.done }
+  local function route_marker(key)
+    local c = m.coords[key]
+    local r = common.row_of(view, key)
+    local icons = {}
+    if r then
+      for i, p in ipairs(view.players) do
+        local cell = r.cells[p.id]
+        local src = cell and cell.species and common.icon(ctx, cell.species, nil)
+        if src and #icons < 8 then icons[#icons + 1] = { src = src, owner = common.color(p, i) } end
+      end
     end
+    routes[#routes + 1] = { id = key, x = c.x, y = c.y, area = c.area, number = r and r.group and r.group.number or nil,
+      done = r and r.done or false, icons = #icons > 0 and icons or nil }
+  end
+  for _, r in ipairs(view.rows) do
+    if m.coords[r.route] then route_marker(r.route); shown[r.route] = true end
+  end
+  for _, key in ipairs(oras.ROUTE_KEYS) do
+    if m.coords[key] and not shown[key] then route_marker(key) end
+  end
+  local calib = ctx.ui.calib
+  if calib and calib.x then
+    players[#players + 1] = { id = "cursor", initial = "+", color = 1, x = calib.x, y = calib.y }
   end
   local map = { type = "map", id = "map", players = players, routes = routes, filter = ctx.ui.map_filter or "all",
-    me = ctx.me, legend = true, action = "map_select" }
-  if ctx.ui.map_src and oras.MAP_SIZE then
-    map.image, map.image_w, map.image_h = ctx.ui.map_src, oras.MAP_SIZE.w, oras.MAP_SIZE.h
-  end
+    me = ctx.me, legend = true, action = "map_select", image = m.src, image_w = m.w, image_h = m.h }
   if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
-  return { type = "column", id = "page-map", gap = 12, children = { map } }
+  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = {
+    { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
+      variant = calib and "primary" or "quiet" },
+    { type = "button", id = "map-change", label = tr("map_change"), action = "map_reset", variant = "quiet",
+      confirm = { title = tr("map_change_title"), text = tr("map_change_text"), confirm_label = tr("map_change") } },
+  } } }
+  if calib then kids[#kids + 1] = calibration(ctx, m) end
+  return { type = "column", id = "page-map", gap = 12, children = kids }
 end
 
 --- Tab order for the current data: { "map"? , "routes", "team", "grave", "log" }.
-function M.tab_ids()
+function M.tab_ids(ctx)
   local ids = {}
-  if M.has_map() then ids[#ids + 1] = "map" end
+  if M.has_map(ctx) then ids[#ids + 1] = "map" end
   for _, id in ipairs({ "routes", "team", "grave", "log" }) do ids[#ids + 1] = id end
   return ids
 end
 
 function M.build(ctx)
   local tr, view = ctx.tr, ctx.view
-  local ids = M.tab_ids()
+  local ids = M.tab_ids(ctx)
   local labels, pages = {}, {}
   local counts = { routes = #view.rows, grave = #view.graveyard, log = #(ctx.events or {}) }
   for i, id in ipairs(ids) do
@@ -241,8 +334,12 @@ function M.build(ctx)
     local builders = { map = map_page, routes = routes_page, team = team_page, grave = graveyard_page, log = log_page }
     pages[i] = builders[id](ctx)
   end
-  local sel = math.min(math.max(ctx.ui.screen_tab or 1, 1), #ids)
-  local kids = { header(ctx) }
+  local sel = math.min(math.max(ctx.tab or ctx.ui.screen_tab or 1, 1), #ids)
+  local kids = {}
+  if ctx.compact then
+    kids[1] = { type = "button", id = "back", label = tr("back"), action = "panel_back", variant = "quiet" }
+  end
+  kids[#kids + 1] = header(ctx)
   local corr = corr_ui.section(ctx)
   if corr then kids[#kids + 1] = corr end
   kids[#kids + 1] = { type = "tabs", id = "tabs", tabs = labels, selected = sel, action = "tab", children = pages }

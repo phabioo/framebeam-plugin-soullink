@@ -8,6 +8,8 @@ P.INTERFACE = "pokemon.core"
 --- collect(call) -> snapshot, issues
 ---   call(fn, ...) returns what pokemon.core's `fn` returns (see from_core). Errors are caught.
 ---   issues = { team = reason?, boxes = reason?, location = ..., battle = ..., encounters = ..., badges = ... }
+--- opts.unsupported: table kept by the caller; a part the core answers with "unsupported" is recorded
+--- there and not asked again.
 --- opts.skip_boxes: do not read the boxes, use opts.boxes (the last complete read) instead.
 --- Box numbers run 1..box_count() (assumption; the core documents box(n) without a base: open).
 function P.collect(call, opts)
@@ -19,7 +21,9 @@ function P.collect(call, opts)
     return a, b
   end
   local function part(name, fn, ...)
+    if opts.unsupported and opts.unsupported[name] then issues[name] = "unsupported"; return end
     local v, why = ask(fn, ...)
+    if why == "unsupported" and opts.unsupported then opts.unsupported[name] = true end
     if type(v) == "table" or (name == "badges" and type(v) == "number") then
       snap[name] = v
     else

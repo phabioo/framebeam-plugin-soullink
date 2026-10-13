@@ -193,6 +193,30 @@ end
 ---   events  run events (fb.run.events), ascending by seq; other event types are ignored
 ---   cfg     rules.parse() result; nil = parse from `run`
 --- See docs/architecture.md for the result fields.
+--- Zone table merged over all players: static `data.oras.ZONES` first, then the states' learned
+--- `zones` (zone id as string -> route key | false). The own state (run.me) wins over the others,
+--- the others are taken in user id order. Returns zone (integer) -> route key | false.
+function V.merge_zones(run, states)
+  local out = {}
+  for z, v in pairs(oras.ZONES) do out[z] = v end
+  local ids = {}
+  for id in pairs(states or {}) do if id ~= run.me then ids[#ids + 1] = id end end
+  table.sort(ids)
+  table.insert(ids, 1, run.me)
+  local seen = {}
+  for _, id in ipairs(ids) do
+    local zs = states and states[id] and states[id].zones
+    if type(zs) == "table" then
+      for k, v in pairs(zs) do
+        local z = math.tointeger(tonumber(k))
+        local ok = v == false or (type(v) == "string" and v ~= oras.STARTER and oras.is_key(v))
+        if z and ok and oras.ZONES[z] == nil and not seen[z] then out[z], seen[z] = v, true end
+      end
+    end
+  end
+  return out
+end
+
 function V.view(run, states, events, cfg)
   run, states = run or {}, states or {}
   cfg = cfg and rules.normalize(cfg) or rules.parse(run)
@@ -469,6 +493,7 @@ function V.view(run, states, events, cfg)
   return {
     mode = cfg.mode, rules = cfg.rules, players = out_players, rows = rows, groups = group_views,
     graveyard = graveyard, stats = stats, hints = hints, invalid_corrections = invalid,
+    zones = V.merge_zones(run, states),
   }
 end
 

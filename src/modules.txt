@@ -18,3 +18,5 @@ ui.hud
 ui.panel
 ui.screen
 ui.tile
+app.icons
+app.maps
