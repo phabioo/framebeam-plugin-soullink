@@ -11,6 +11,20 @@ function C.mon_name(m)
   return "#" .. tostring(m and m.species or "?")
 end
 
+--- `cache:` src of the creature icon (pokemon-core icon, fetched lazily by the controller), or nil.
+function C.icon(ctx, species, form)
+  if type(ctx.icon) ~= "function" then return nil end
+  return ctx.icon(species, form)
+end
+
+--- `image` block for a mon (alive or dead state), or nil while there is no icon.
+function C.icon_block(ctx, id, m, owner, size)
+  local src = C.icon(ctx, m.species, m.form)
+  if not src then return nil end
+  return { type = "image", id = id, src = src, size = size or "s", state = m.dead and "dead" or "alive",
+           owner = owner, label = C.mon_name(m) }
+end
+
 --- Player number 1..8 (identity color): participant color 0..7 + 1, else the list position.
 function C.color(p, i)
   if math.type(p.color) == "integer" and p.color >= 0 and p.color <= 7 then return p.color + 1 end

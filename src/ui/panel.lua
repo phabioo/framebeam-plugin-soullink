@@ -62,6 +62,12 @@ local function location(ctx, me)
     status = common.loc_status(status), children = kids }
 end
 
+--- The core reports a zone that no player has mapped to a route yet (and the player has not decided).
+local function needs_zone(ctx, me)
+  local z = me.place.zone
+  return z ~= nil and me.place.key == nil and not me.place.manual and ctx.view.zones[z] == nil
+end
+
 local function place_picker(ctx, me)
   local tr = ctx.tr
   local opts = { { value = oras.STARTER, label = oras.label(oras.STARTER, tr) } }
@@ -74,6 +80,12 @@ local function place_picker(ctx, me)
     { type = "textfield", id = "place-text", action = "place_text", placeholder = tr("place_other"), text = "" },
   }
   if ctx.readonly then return nil end
+  if needs_zone(ctx, me) then
+    kids[#kids + 1] = { type = "button", id = "zone-none", label = tr("zone_not_route"), action = "zone_none", variant = "quiet" }
+    return { type = "card", id = "zone-new", title = tr("zone_new_title"), children = {
+      { type = "text", id = "zone-new-text", text = tr("zone_new_text"), style = "meta" },
+      { type = "column", id = "place-picker", gap = 4, children = kids } } }
+  end
   return { type = "column", id = "place-picker", gap = 4, children = kids }
 end
 
@@ -95,7 +107,10 @@ local function team(ctx, me)
   for i, m in ipairs(me.team) do
     local title = common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
     if m.dead then title = "✕ " .. title end
-    local c = { { type = "text", id = "m-t" .. i, text = title, style = "body", tone = m.dead and "neutral" or nil } }
+    local head = { type = "text", id = "m-t" .. i, text = title, style = "body", tone = m.dead and "neutral" or nil }
+    local icon = common.icon_block(ctx, "m-i" .. i, m, common.color(me, common.index_of(ctx.view, me.id)), "s")
+    if icon then head = { type = "row", id = "m-h" .. i, gap = 8, align = "center", children = { icon, head } } end
+    local c = { head }
     local ratio = (not m.dead) and common.hp_ratio(m)
     if ratio then
       c[#c + 1] = { type = "bar", id = "m-hp" .. i, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) }
@@ -133,7 +148,7 @@ local function graveyard(ctx)
   if open then
     local rows = {}
     for i, g in ipairs(view.graveyard) do
-      rows[i] = { id = "g" .. i, title = "✕ " .. common.mon_name(g),
+      rows[i] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), image = common.icon(ctx, g.species, g.form),
         sub = tr("grave_sub", { route = g.route and oras.label(g.route, tr) or "?", player = common.name_of(view, g.owner) }),
         tone = "neutral" }
     end

@@ -72,17 +72,30 @@ local function owns_line(st, species, family)
   return false
 end
 
+local function zone_id(z)
+  if math.type(z) == "float" and z == math.floor(z) then z = math.tointeger(z) end
+  if math.type(z) == "integer" then return z end
+  return nil
+end
+
+--- Place from the reported zone. A mapped zone sets the place automatically (manual = false). A
+--- manual place wins for as long as the zone stays the same; when the zone changes, the zone table
+--- decides again. An unmapped zone leaves the key empty (the UI asks which route this is).
 local function update_place(st, loc, facts, zones)
-  if type(loc) ~= "table" or loc.zone == nil then return end
+  local zone = type(loc) == "table" and zone_id(loc.zone)
+  if not zone then return end
   local old = st.place or { manual = false }
-  local mapped = zones[loc.zone]
+  if old.manual and (old.zone == nil or old.zone == zone) then
+    old.zone = zone -- remember the zone the manual place belongs to
+    st.place = old
+    return
+  end
+  local mapped = zones[zone]
   local new
   if mapped ~= nil then
-    new = { key = mapped or nil, name = loc.name, zone = loc.zone, manual = false }
-  elseif old.manual then
-    return -- unknown zone: keep what the user set by hand
+    new = { key = mapped or nil, name = loc.name, zone = zone, manual = false }
   else
-    new = { name = loc.name, zone = loc.zone, manual = false }
+    new = { name = loc.name, zone = zone, manual = false }
   end
   if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or old.manual then
     st.place = new
@@ -95,15 +108,18 @@ end
 
 --- Set the place by hand. `input` is a route key ("route-104", "starter", "place:<text>") or free
 --- text typed by the user (becomes "place:<text>"); nil/"" clears the place. `name` is optional
---- display text. Returns the new state and a place fact (or nil when nothing changed).
-function D.set_place(prev, input, name)
+--- display text, `zone` the zone the player is in right now (nil when the core reports none): the
+--- manual place wins until the zone changes. Returns the new state and a place fact (nil when
+--- nothing changed).
+function D.set_place(prev, input, name, zone)
   local st = state.ensure(util.copy(prev))
   local old = st.place or { manual = false }
   local key
   if input ~= nil and input ~= "" then
     key = oras.is_key(input) and input or oras.custom_key(input)
   end
-  st.place = { key = key, name = name, manual = true }
+  zone = zone_id(zone) or (old.manual and old.zone) or nil
+  st.place = { key = key, name = name, zone = zone, manual = true }
   if key == old.key and name == old.name and old.manual then return st, nil end
   return st, { kind = "place", key = key, name = name, manual = true, previous = old.key }
 end
@@ -177,7 +193,7 @@ end
 ---   snap  see the snapshot description above
 ---   cfg   result of rules.parse (or flat rule flags)
 ---   opts  { family = function(species) -> family id (default: species itself),
----           zones = zone -> route key table (default data.oras.ZONE_TO_ROUTE),
+---           zones = zone -> route key table (default data.oras.ZONES),
 ---           first = "auto"|"baseline"|"starter" (what the first complete snapshot means),
 ---           game = { id, language } }
 --- Tracking starts with the first snapshot where team and boxes are both known: then either
@@ -195,7 +211,7 @@ function D.diff(prev, snap, cfg, opts)
     st.game.language = st.game.language or opts.game.language
   end
 
-  update_place(st, snap.location, facts, opts.zones or oras.ZONE_TO_ROUTE)
+  update_place(st, snap.location, facts, opts.zones or oras.ZONES)
   local b = badge_count(snap.badges)
   if b then st.badges = b end
 

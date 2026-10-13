@@ -5,8 +5,8 @@ Status: package 1 (tooling and the pure run model) and package 2 (wiring, UI, re
 ## Layout
 
 - `src/`: Lua modules; the list is `src/modules.txt`. `src/main.lua` is the entry (package 1: loads the modules and logs).
-  - `data/oras.lua`: route keys, zone table (empty), level caps, labels.
-  - `app/controller.lua` (wiring to `fb`), `app/sync.lua` (set/patch of UI slots).
+  - `data/oras.lua`: route keys, `ZONES` (zone table, empty), `COORDS` (route positions per map id, empty), level caps, labels.
+  - `app/controller.lua` (wiring to `fb`), `app/sync.lua` (set/patch of UI slots), `app/icons.lua` (lazy creature icons from pokemon-core into the own cache), `app/maps.lua` (region map choice, previews, recorded route positions).
   - `ui/common.lua`, `panel.lua`, `hud.lua`, `tile.lua`, `screen.lua`, `corrections.lua`, `board.lua`: pure builders `ctx -> block tree`.
   - `model/util.lua`, `rules.lua`, `state.lua`, `detect.lua`, `snapshot.lua`, `events.lua`, `corrections.lua`, `view.lua`.
 - `tools/bundle.lua`: generates the single `plugin/main.lua` (the sandbox has no `require`). `lua5.4 tools/bundle.lua` writes, `--check` fails when it is stale. A new module must be listed in `src/modules.txt`.
@@ -37,16 +37,16 @@ Defaults: `first_encounter_only` true, `dupes_clause` true, `shiny_clause` true,
 
 ### `data.oras`
 
-`ROUTE_KEYS` (`route-101` .. `route-134`), `STARTER = "starter"`, `ZONE_TO_ROUTE` (empty, zone id -> route key or `false` for "not a route"; filled once pokemon-core reports ORAS locations), `LEVEL_CAPS[badges]` (marked verify locally), `level_cap(badges)`, `is_key(key)`, `custom_key(text)` (`place:<text>`, whitespace cleaned, 48 characters), `order_index(key)`, `compare(a, b)`, `route_number(key)`, `label(key, tr)` (i18n `route` with `{n}`, `route_starter`; free places keep the typed text).
+`ROUTE_KEYS` (`route-101` .. `route-134`), `STARTER = "starter"`, `ZONES` (alias `ZONE_TO_ROUTE`; empty, zone id -> route key or `false` for "not a route"; filled once the zones are recorded with the real game), `COORDS[map id][route key] = { x, y, area? }` (empty), `LEVEL_CAPS[badges]` (marked verify locally), `level_cap(badges)`, `is_key(key)`, `custom_key(text)` (`place:<text>`, whitespace cleaned, 48 characters), `order_index(key)`, `compare(a, b)`, `route_number(key)`, `label(key, tr)` (i18n `route` with `{n}`, `route_starter`; free places keep the typed text).
 
 ### `model.state`
 
-`new(game)`, `ensure(st)`, `size(st)`, `guard(st) -> ok, bytes`, `compact(st)`, `deaths(mon)`, `MAX_BYTES` (48 KiB soft limit, platform limit is 64 KiB). Test: 6 team + 120 box mons are about 18 KiB.
+`new(game)`, `ensure(st)` (optional `zones = { ["<zone id>"] = route key | place key | false }`, learned zone answers, at most 120), `size(st)`, `guard(st) -> ok, bytes`, `compact(st)`, `deaths(mon)`, `MAX_BYTES` (48 KiB soft limit, platform limit is 64 KiB). Test: 6 team + 120 box mons are about 18 KiB.
 
 ### `model.detect`
 
 - `diff(prev, snap, cfg, opts) -> new_state, facts`. `prev` is never modified. `opts`: `family(species)` (default identity), `zones` (default `ZONE_TO_ROUTE`), `first` (`auto`|`baseline`|`starter`), `game`.
-- `set_place(prev, input, name) -> new_state, fact|nil`: manual place; `input` is a route key or free text (becomes `place:<text>`), empty clears.
+- `set_place(prev, input, name, zone) -> new_state, fact|nil`: manual place; `input` is a route key or free text (becomes `place:<text>`), empty clears; `zone` (the zone the core reports right now) is stored with it.
 
 Rules of the diff:
 
@@ -56,7 +56,7 @@ Rules of the diff:
 - Evolution: same personality, other species: fact `evolve`, mon updated. Form/level/nickname are updated.
 - Death: hp known before (>0) and now 0: `deaths + 1`, fact `death`. Unknown hp never produces a death. A mon missing from a snapshot with team and boxes both known is `gone` after two consecutive snapshots; with a part unknown nothing changes.
 - Battle: with `battle().active` and `wild`: on the transition to active one `encounter` fact (hordes only count with `hordes_count`; shiny/dupe/used routes do not count); route entry `encounter`. On the transition to inactive remaining `encounter` entries become `missed` (fact `missed`). Without `battle`, an `encounters` list is processed as new encounters (no `missed` detection then).
-- Place: `location.zone` through the zone table; an unknown zone keeps a manual place and otherwise clears the key.
+- Place: `location.zone` through the zone table (`opts.zones`, the merged table, see `view.merge_zones`). A mapped zone sets the place automatically (`manual = false`), so the first catch lands on that route. A manual place wins while the zone stays the same (a manual place without a zone adopts the first reported zone) and is replaced when the zone changes. An unmapped zone leaves the key empty (`place.zone` is set; the panel asks).
 
 Facts (`kind`): `place {key?, name?, zone?, manual, previous?}`, `catch {mon, species, form?, nickname?, level?, shiny, route?, where, counts, why?, gift?, starter?}`, `evolve {mon, from, to, route?}`, `death {mon, species, nickname?, route?, deaths}`, `moved {mon, from, to}`, `encounter {route?, species?, form?, shiny, horde, counts, why?}`, `missed {route, species?}`.
 
@@ -112,18 +112,24 @@ Event type `soullink.correction`, `source = "manual"`, payload at most 4 KiB. `p
 - `stats`: `deaths, groups_dead, groups_linked, routes_done, routes_total, badges_max, alive`.
 - `hints` (never blocking): `nickname_missing`, `level_cap {level, cap}`, `unlinked_in_team`, `partner_not_in_team {partner, partner_mon}`; each with `user, mon`.
 - `invalid_corrections`: seqs of correction events that failed validation (ignored).
+- `zones`: `merge_zones(run, states)` -> zone id (integer) -> route key | `false`: static `oras.ZONES`, then the own state's `zones` (`run.me`), then the other players' in user id order; the first entry for a zone wins.
 - Nuzlocke mode: no groups, deaths stay with the owner.
 
 ## Wiring (`app.controller`)
 
 - Without `fb.run` (game not started from Runs, or shell context without an open run): panel, HUD and screen show an empty state ("Start this game from Runs → Play run"; the screen text also points to the Runs page), no core calls, no tracking.
+- Core parts that answer "unsupported" (`snapshot` option `unsupported`) are not asked again.
 - Run view (`fb.run.current().view == true`, shell context, read only): the controller sets the `run` slot with the run screen builder (`screen.build` with `readonly`: routes, team & box, graveyard, event log; no correction forms or write buttons) and the screen slot shows the Runs pointer. No core calls, no polling, no notices, no board, no `tiles` subscription, no own state injected. Every write action is ignored; the platform would answer `setState`/`event`/`setBoard` with `nil, "read only outside the game"`. `common.writable` is false for a run with `view`.
 - With `fb.run`: own state is continued from `fb.run.state()`. Every 500 ms: `snapshot.from_core` (team, location, battle, badges; boxes every 5 s, in between the last box read is reused), `detect.diff`, `setState` only when the encoded state changed, facts posted as automatic events (English text from i18n, species shown as `#<id>` or the nickname until the core provides names). Core calls are `pcall`ed; failures are logged once. Paused/finished/abandoned runs are read only: no polling, no writes, banner in the panel, no action buttons.
 - Subscriptions: `fb.run.on` for `event`, `state`, `participants`, `status` (4 of 16), host event `tiles`, `fb.ui.on_action`. Events are cached (paged from seq 0), the view is recomputed at most every 250 ms when something changed.
 - `app.sync.push(slot, tree)`: unchanged tree = nothing, same structure with changed props on blocks with an id (at most 12) = `fb.ui.patch`, else `fb.ui.set`.
 - Board: `fb.run.setBoard` with the compact tree (players, routes table, graveyard, deaths), at most every 5 s and only when it changed.
 - Notices (`fb.ui.notify`): deaths in the own link groups (important, actions "Open run" and "Undo death...", HUD expanded for 3 s), catches of others that count (info), new route hint for detected places (info). A death waits for the state that shows it (up to 40 renders).
-- Hotkeys: `toggle-hud` does nothing (the host handles it), `doesnt-count` opens the 5f-1 form for the current route, `open-run` = `open_run`.
+- Hotkeys: `toggle-hud` does nothing (the host handles it), `doesnt-count` opens the 5f-1 form for the current route, `open-run` (Ctrl+R) toggles the panel between the live view and the run view.
+- Open run: the platform has no call that opens the screen slot, so `open_run` (button, toast action) sets `ui.panel_run`: the `panel` slot then shows `screen.build` in compact form (own tab `ui.panel_tab`, a "← Back" button with action `panel_back`, no group column in the routes table) instead of `panel.build`. The screen slot is unchanged.
+- Icons (`app.icons`): builders call `ctx.icon(species, form)` -> `cache:icons/<species>-<form>.png` or nil (queued once). At most 3 `pokemon.core` `icon` calls per tick, after `info().features.icons` is true (re-checked every 10 s while false; unknown `info` just tries). `nil, "not_ready"` is retried after 5 s, 10 s, ... up to 30 s; any other failure is remembered per creature; five failures without a success switch icons off. Used as `image` blocks in team rows (panel, screen), list rows (graveyard, box, panel graveyard), the selected route and map marker `icons`.
+- Route detection: each poll passes the merged zone table to `detect.diff` and remembers the reported zone (`cur_zone`). An unmapped zone shows the card "New place detected - which route is this?" (route select, free text, "Not a route"); the answer is stored in the own state `zones["<zone>"]` (route key, free place key or `false`) unless the static table or another player's mapping covers the zone (the own mapping can be changed), and reaches every player through the merged table. Without `location()` support nothing changes: the manual picker.
+- Map (`app.maps`): `map_selected()` is used when it returns an id, else `map_candidates()` (`not_ready` is polled every 3 s; `unsupported` or a missing function hides the Map tab). Candidates get previews (`map_image(id)` written to `map/cand-<n>-<id>.png`, 2 per tick), "Use this map" copies the PNG to `map/region.png` and writes `map/choice.txt`; image size comes from the PNG header. Route positions: `oras.COORDS[map id]` under the player's recorded ones in `map/coords.json` (`{"map":id,"routes":{key:{"x","y"}}}`). Calibration (button "Place routes", also available in a paused run, cache only): route select, step 2/10/40 px, arrows, "Set position" (marker id `cursor`), "Export positions" logs one line `COORDS["<id>"] = { ["route-101"] = { x = .., y = .. }, ... }` with `fb.log.info`. "Change map" clears the choice. No core calls in the shell run view (only the cache is read).
 
 ## UI
 
@@ -132,7 +138,7 @@ All strings come from `plugin/i18n/en.json` (source) and `de.json`; only tones, 
 - Panel (5b): run header with mode, name, read-only badge and "Open run"; `location` block (place, status, others on the same place); place picker (`select` over starter and Route 101..134 plus a `textfield` "Other place..." for free places, because the core has no location); encounter hint with "Doesn't count"; correction section when a form is open; own team rows (nickname or `#id`, level, HP bar when hp and max hp are known, linked partners as avatars, "Mark as dead" with danger confirm because the core has no live HP); graveyard chip toggling a list; footer with badges (`select`, editable by hand while the core has none), next level cap and "Run screen".
 - HUD (5c): one `card` (action `hud_toggle`): `SL` badge, place, status dot text. Expanded (click) or for 3 s after a linked death: other players with their state on the same place.
 - Tile (5d): `tiles` host event (`{ id, player, user_id, game }`) matched to participants by `user_id` first, by name (case-insensitive) as fallback; strip text `SL <place> · <n> alive`.
-- Screen (5e, shown in the screen slot): header (run, status, mode, players with place, stats), correction section, `tabs`: Routes | Team & box | Graveyard | Event log. The Map tab appears first only when `data.oras.COORDS` has coordinates (none yet; drawn default F); the map block then shows the loading state until an image is set. Routes: filter chips, table (route, one column per player, group, status), selected route with actions (mark missed, doesn't count, undo death, change link group), "+ Add by hand". Team & box: per player team rows (own: change group, gift, dead) and box list. Graveyard: table, row action undoes the group's death. Event log: filter chips, newest 100 rows, manual rows warning tone, correction rows revert.
+- Screen (5e, shown in the screen slot and compact in the panel): header (run, status, mode, players with place, stats), correction section, `tabs`: Map | Routes | Team & box | Graveyard | Event log. The Map tab comes first while the map is scanning, being chosen or chosen (setup: scanning empty state, candidate rows with preview image and "Use this map"; chosen: map block with markers only for routes with positions, owners' icons and the players' places, calibration section). Routes: filter chips, table (route, one column per player, group, status), selected route with actions (mark missed, doesn't count, undo death, change link group), "+ Add by hand". Team & box: per player team rows (own: change group, gift, dead) and box list. Graveyard: list (icon, name, owner, route, cause, group), row action undoes the group's death. Event log: filter chips, newest 100 rows, manual rows warning tone, correction rows revert.
 - Corrections (5f): inline section; fields change with the actions `cf:<field>` (text fields commit on Enter), `corr_submit` validates with `corrections.validate_spec` and posts a manual `soullink.correction` event (text from i18n), `corr_cancel` closes. Danger/confirm dialogs on the buttons for undo death, mark dead, mark missed and revert. Forms: doesn't count (reason segments), undo death (reason field), set group, add by hand (species number, nickname, level, state), mark missed, mark dead, gift, revert.
 - Board (5gh): `board.build`.
 - Run start rules (5a-4): the manifest field `run_settings` declares `mode` (enum `nuzlocke`|`soullink`, default `soullink`) and one boolean `rules.<flag>` per flag of `model.rules` with the same defaults; the Start dialog sends them as `settings["net.framebeam.soullink"] = { mode, rules = {...} }`, `rules.parse` reads them (the two-or-more-players mode fallback only applies to runs without settings). Labels and hints are the i18n keys `rs_*` (`rs_mode`, `rs_<flag>`, `rs_<flag>_hint`, `rs_mode_<value>`). `tests/test_platform.lua` checks the manifest against the validator rules and that its keys map exactly onto `rules.parse`.
@@ -142,19 +148,19 @@ Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui
 
 ## Open points
 
-- pokemon-core: `location()`, `battle()`, `encounters()`, `badges()` and live hp are not implemented (ORAS adapter has team/box only). The shapes above are assumptions; until then the place is entered by hand, encounters and deaths are not detected, and the user marks them via corrections. Box numbering base of `box(n)` (assumed 1..`box_count()`), the zone id and a `nicknamed` flag in the record are not specified.
+- pokemon-core (ORAS adapter at 0.1): `location()`, `battle()`, `encounters()`, `badges()` and live hp are not implemented (ORAS adapter has team/box only). The shapes above are assumptions; until then the place is entered by hand, encounters and deaths are not detected, and the user marks them via corrections. Box numbering base of `box(n)` (assumed 1..`box_count()`), the zone id and a `nicknamed` flag in the record are not specified.
 - Family lookup (evolution lines) for the dupes clause: only the `family` hook exists, the default compares species ids. A table keyed by species ids is needed (no names).
 - `pairs_differ_primary_type` is stored but not evaluated: it needs primary types per species.
 - Zone id -> route key table (`data.oras.ZONE_TO_ROUTE`) and the ORAS level caps (`LEVEL_CAPS`) are to be filled and verified locally with the real game.
-- pokemon-core is a manifest `requires` (`^0.1`): the Start dialog adds it to the run automatically (newest Hub version that fits) and it needs no `run.state` permission; the Hub must offer a matching version. Version 0.2.0 of this plugin.
+- pokemon-core is a manifest `requires` (`>=0.1`; 0.2 adds icons, location and the map): the Start dialog adds it to the run automatically (newest Hub version that fits) and it needs no `run.state` permission; the Hub must offer a matching version. Version 0.3.0 of this plugin.
 - Changing rules during a run is not modeled (run settings are fixed at the start).
 - Tracking start (baseline vs starter) is decided from the first snapshot; the run start flow (new game vs existing save) should tell the plugin explicitly (`opts.first`).
 - Participants with status other than `joined` are not players; `left` participants drop out of link groups.
 - Broken groups (someone missed) do not link the remaining members at all; whether partners that caught should stay linked is a rules question for the design.
 - Event `text` for automatic and manual events and the run board tree are package 2.
-- No `fb.ui` function opens or focuses the screen slot (plugin API v1): "Open run", Ctrl+R and the toast action only reset the screen's tab and refresh it. Needs a host function or a toast/link target.
-- Species names are not available from the core yet: creatures show as `#<species id>` or the nickname, and places as `Route <n>`.
-- The map needs coordinates and the image from the game file at runtime (`data.oras.COORDS`, `MAP_SIZE`); none yet, so the Map tab is hidden. Creature icons (`image` blocks) are not used for the same reason.
+- No `fb.ui` function opens or focuses the screen slot (plugin API v1): "Open run" shows the run view inside the panel instead (see Wiring).
+- Species names are not available from the core yet: creatures show as `#<species id>` or the nickname (plus the icon when available), and places as `Route <n>`.
+- `data.oras.COORDS` and `ZONES` are empty until recorded with the real game (Map tab calibration and its export line; learned zones); wrong zone answers of another player cannot be overridden by a player who sees the zone mapped by someone else except by choosing the place by hand. The pokemon-core functions `icon`, `info`, `map_candidates`, `map_image`, `map_selected` and `location` (zone) are assumed as briefed (pokemon-core 0.2); a 0.1 core simply lacks them (no icons, no Map tab, manual picker). The map block popover is not used.
 - Text fields only report their value on Enter, so the correction forms say so; a form submit button cannot read unsent text.
 - Approval of corrections by another player and the settings page (5i) are not built; the run start (5a) is the platform's Start dialog with the manifest rules section (the mode cards and invite steps are the platform's).
 - Release: the `.fbplugin` is unsigned; signing and the Hub upload flow are open.

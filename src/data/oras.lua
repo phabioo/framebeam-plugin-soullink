@@ -14,26 +14,22 @@ for n = M.FIRST_ROUTE, M.LAST_ROUTE do
   M.ROUTE_KEYS[#M.ROUTE_KEYS + 1] = "route-" .. n
 end
 
---- zone id -> route key (string) or false (known zone that is not a route, e.g. a town).
---- EMPTY on purpose: filled once pokemon-core reports ORAS locations (location() is not
---- implemented there yet). Until then the place comes from manual input.
-M.ZONE_TO_ROUTE = {}
+--- zone id (pokemon-core `location().zone`) -> route key (string) or false (known zone that is not a
+--- route, e.g. a town). EMPTY on purpose: the table is unknown until recorded with the real game.
+--- Meanwhile zones are learned at runtime: the answer of a player is kept in the own run state
+--- (`zones`) and merged across all players (model.view.merge_zones).
+M.ZONES = {}
+M.ZONE_TO_ROUTE = M.ZONES -- old name
 
---- Route key -> { x, y, area? } on the region map image (image coordinates). EMPTY on purpose:
---- the map image and its coordinates are read from the player's own game file at runtime, which is
---- not implemented yet. While empty, the screen hides the Map tab.
+--- Route positions on the region map image, keyed by the map id that pokemon-core reports
+--- (`map_candidates()` / `map_selected()`): COORDS[map id][route key] = { x, y, area? } in image
+--- pixels. Our own recorded facts, EMPTY for now: positions are recorded in the Map tab
+--- ("Place routes") and exported with "Export positions".
 M.COORDS = {}
-M.MAP_SIZE = nil -- { w, h } of the map image once known
 
 --- Level cap hint by number of badges owned: LEVEL_CAPS[badges] = cap of the next gym.
 --- VERIFY LOCALLY against the real game before relying on it; hints only, never blocking.
 M.LEVEL_CAPS = { [0] = 15, 19, 24, 29, 31, 33, 42, 43 }
-
---- Route key -> { x, y, area? } on the region map image (image coordinates). EMPTY on purpose:
---- the map image and its coordinates are read from the player's own game file at runtime, which is
---- not implemented yet. While empty, the screen hides the Map tab.
-M.COORDS = {}
-M.MAP_SIZE = nil -- { w, h } of the map image once known
 
 --- Level cap hint for `badges` badges, or nil when unknown (for example all eight badges).
 function M.level_cap(badges)
