@@ -1,6 +1,7 @@
 -- Region map from the player's own game: pokemon-core `map_candidates()` lists large images of the
 -- game files, `map_image(id)` returns one as PNG, `map_selected()` is the core's own pick. The
--- player chooses one (or the core's pick is used); the choice and the image are kept in the own cache:
+-- player always confirms one (the core's pick is only marked "suggested", never shown as the map
+-- on its own); the choice and the image are kept in the own cache:
 --   map/choice.txt   map id of the choice ("" = none)
 --   map/region.png   the chosen image
 --   map/cand-<n>-<id>.png   previews of the candidates
@@ -70,7 +71,7 @@ function M:load_coords()
   if id ~= self.id then return end
   local routes = s:match('"routes"%s*:%s*(%b{})') or ""
   for key, x, y in routes:gmatch('"([^"]+)"%s*:%s*{%s*"x"%s*:%s*(-?%d+)%s*,%s*"y"%s*:%s*(-?%d+)%s*}') do
-    if oras.is_key(key) then self.coords[key] = { x = tonumber(x), y = tonumber(y) } end
+    if oras.is_route(key) then self.coords[key] = { x = tonumber(x), y = tonumber(y) } end
   end
 end
 
@@ -93,7 +94,7 @@ end
 
 --- Record the position of a route (image pixels, clamped to the image).
 function M:set_coord(route, x, y)
-  if self.state ~= "ready" or not oras.route_number(route) then return false end
+  if self.state ~= "ready" or not oras.is_route(route) then return false end
   x = math.max(0, math.min(self.w, math.floor(x + 0.5)))
   y = math.max(0, math.min(self.h, math.floor(y + 0.5)))
   self.coords[route] = { x = x, y = y }
@@ -107,7 +108,7 @@ function M:export_line()
   local keys = {}
   for key in pairs(all) do keys[#keys + 1] = key end
   if #keys == 0 or not self.id then return nil end
-  table.sort(keys, oras.compare)
+  table.sort(keys, function(a, b) return oras.compare(a, b, self.order) end)
   local parts = {}
   for _, key in ipairs(keys) do
     local c = all[key]
@@ -152,7 +153,7 @@ function M:step(now)
     if now < self.next_at then return false end
     local ok, sel = self:call("map_selected")
     if not ok then self.state = "unsupported"; return true end
-    if type(sel) == "string" and sel ~= "" and self:adopt(sel) then return true end
+    self.suggested = (type(sel) == "string" and sel ~= "") and sel or nil -- marked, never adopted
     local ok2, list, why = self:call("map_candidates")
     if not ok2 then self.state = "unsupported"; return true end
     if type(list) ~= "table" then
@@ -199,7 +200,8 @@ function M:view()
   local cands = {}
   for _, c in ipairs(self.cands) do
     local pv = self.preview[c.id]
-    cands[#cands + 1] = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = self.failed[c.id] }
+    cands[#cands + 1] = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = self.failed[c.id],
+      suggested = self.suggested ~= nil and self.suggested == c.id or nil }
   end
   return { state = self.state, id = self.id, w = self.w, h = self.h,
            src = self.state == "ready" and ("cache:" .. M.REGION) or nil,

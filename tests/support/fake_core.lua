@@ -1,0 +1,89 @@
+-- Fake `pokemon.core` implementing the v0.3 contract (synthetic data only; names are made up by code).
+--   local core = fake_core.new()            core.provider = table for mock.set_provider("pokemon.core", ...)
+--   core.world: team, box (flat list of box 1), location, badges, battle, areas, species types ...
+--   core:off("areas", "unsupported")        makes a function answer nil, "unsupported" | "not_ready"
+--   core:encounter{ species=, location=, shiny=, horde= }   appends an entry to encounters() with the next seq
+local B = require("build")
+
+local F = {}
+
+--- Default world: two team mons, empty box, three encounter areas (ids 301..303) and a town (id 400).
+function F.new(over)
+  local w = {
+    team = { B.rec({ p = 0xB1, sp = 900, hp = 30, nick = "Alpha" }), B.rec({ p = 0xB2, sp = 901, hp = 30, nick = "Beta" }) },
+    box = {},
+    location = { zone = 10, location = 301, name = "Synthetic Area One", source = "memory" },
+    badges = { count = 0, flags = { false, false, false, false, false, false, false, false } },
+    areas = {
+      { id = 301, name = "Synthetic Area One", zones = { 10 }, encounters = { grass = { { species = 910, form = 0, min = 2, max = 4 } } } },
+      { id = 302, name = "Synthetic Area Two", zones = { 11 }, encounters = { surf = { { species = 911, form = 0, min = 5, max = 8 } } } },
+      { id = 303, name = "Synthetic Area Three", zones = { 12 }, encounters = { horde = { { species = 912, form = 0, min = 3, max = 3 } } } },
+    },
+    zone_info = { [13] = { zone = 13, location = 400, name = "Synthetic Town" } },
+    battle = { active = false },
+    encounters = {},
+    types = {},            -- species -> { t1, t2 }
+    off = {},              -- function name -> reason
+    calls = {},
+  }
+  for k, v in pairs(over or {}) do w[k] = v end
+  local self = { world = w }
+
+  local function guard(fn, f)
+    return function(...)
+      w.calls[fn] = (w.calls[fn] or 0) + 1
+      if w.off[fn] then return nil, w.off[fn] end
+      return f(...)
+    end
+  end
+  local p = {}
+  p.team = guard("team", function() return w.team end)
+  p.box_count = guard("box_count", function() return 1 end)
+  p.box = guard("box", function() return w.box end)
+  p.location = guard("location", function() return w.location end)
+  p.badges = guard("badges", function() return w.badges end)
+  p.areas = guard("areas", function() return w.areas end)
+  p.battle = guard("battle", function() return w.battle end)
+  p.encounters = guard("encounters", function() return w.encounters end)
+  p.zone_info = guard("zone_info", function(z) return w.zone_info[z] end)
+  p.trainer = guard("trainer", function() return { name = "Synth", tid = 1, sid = 2, version = "x", language = "en", money = 0, badges = 0, play_time = { h = 0, m = 0, s = 0 } } end)
+  p.species_info = guard("species_info", function(sp)
+    local t = w.types[sp]
+    if not t then return nil, "not_ready" end
+    return { types = { t[1], t[2] or t[1] }, growth = 0 }
+  end)
+  p.name = guard("name", function(kind, id)
+    if kind == "species" then return "Synthetic Species " .. id end
+    if kind == "location" then
+      for _, a in ipairs(w.areas) do if a.id == id then return a.name end end
+      return "Synthetic Place " .. id
+    end
+    return nil, "unsupported"
+  end)
+  p.info = guard("info", function() return { features = { names = true, areas = true } } end)
+  self.provider = p
+
+  function self:off(fn, reason) w.off[fn] = reason end
+  function self:on(fn) w.off[fn] = nil end
+  --- Append a wild encounter (oldest first, at most 64 kept) with the next seq.
+  function self:encounter(o)
+    w.next_seq = (w.next_seq or 0) + 1
+    w.encounters[#w.encounters + 1] = { seq = w.next_seq, species = o.species or 910, form = 0, level = o.level or 3,
+      shiny = o.shiny or false, horde = o.horde or false, zone = o.zone or w.location.zone,
+      location = o.location or w.location.location, frame = w.next_seq * 100 }
+    while #w.encounters > 64 do table.remove(w.encounters, 1) end
+  end
+  --- Move to an area (by id) or a town.
+  function self:go(location, name, zone)
+    w.location = { zone = zone or location, location = location, name = name or ("Synthetic Place " .. location), source = "memory" }
+  end
+  function self:battle_start(o)
+    o = o or {}
+    w.battle = { active = true, kind = o.kind or "wild", horde = o.horde or false,
+      foes = { B.rec({ p = 0xF00D, sp = o.species or 910, hp = 10 }) }, own = o.own or {} }
+  end
+  function self:battle_end() w.battle = { active = false } end
+  return self
+end
+
+return F

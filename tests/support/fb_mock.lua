@@ -70,7 +70,7 @@ function M.new(opts)
   local mock = { logs = {}, events = {}, provided = {}, watches = {}, dev_watches = {}, cache_files = {} }
   local regions = opts.memory or {}
   mock.regions = regions
-  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.3.1" } }
+  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.4.0" } }
   fb.game = opts.game or {}
   if opts.language and not fb.game.language then fb.game.language = opts.language end
   mock.fb = fb
@@ -362,6 +362,15 @@ function M.new(opts)
     end,
     on_action = function(fn) ui.handler = fn end,
   }
+  -- fb.ui.open(slot): platform 0.11+ only; opts.no_ui_open leaves it out (older FrameBeam).
+  ui.opened = {}
+  if not opts.no_ui_open then
+    fb.ui.open = function(slot)
+      if slot ~= "screen" and slot ~= "panel" then error("open: slot " .. tostring(slot) .. " not declared", 2) end
+      ui.opened[#ui.opened + 1] = slot
+      return true
+    end
+  end
   --- mock.action(action, value, slot) calls the registered fb.ui.on_action handler.
   function mock.action(action, value, slot) return ui.handler(action, deep_copy(value), slot) end
 

@@ -6,6 +6,9 @@ local S = {}
 S.VERSION = 1
 --- Soft limit well below the 64 KiB platform limit; guard() compacts above it.
 S.MAX_BYTES = 48 * 1024
+S.MAX_NAMES = { sp = 400, loc = 200 }  -- entries per name table
+S.NAME_LEN = { sp = 24, loc = 32 }     -- characters per name
+S.MAX_AREAS = 400
 
 --- Fresh state. `game` = { id = ..., language = ... } (both optional).
 ---
@@ -20,17 +23,24 @@ S.MAX_BYTES = 48 * 1024
 ---   routes = { [route key] = { status = "encounter"|"caught"|"missed", mon?, species?, kind? } }
 ---   order  = { "<hex8>", ... }   tracked mons in team order
 ---   badges = number
+---   names  = { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } }   display names read from
+---            the game when a catch / encounter / place was recorded (short, one entry per id), so other
+---            players and the Hub show names without a running game
+---   areas  = { <location id>, ... }   encounter areas in game order (pokemon-core areas()), for ordering
+---   enc_seq = n   last handled pokemon-core encounters() seq
+---   mons[..].fz = true   death already counted from the battle (until the team record agrees)
+---   mons[..].ty = n   primary type id (only with the rule pairs_differ_primary_type)
 function S.new(game)
   local g = {}
   if type(game) == "table" then
     g.id = game.id
     g.language = game.language
   end
-  return {
+  return S.ensure({
     v = S.VERSION, started = false, inb = false,
     game = g, place = { manual = false },
     baseline = {}, mons = {}, routes = {}, order = {}, badges = 0,
-  }
+  })
 end
 
 --- Complete a state received from the Hub (nil or older shape) so the model can use it.
@@ -44,7 +54,29 @@ function S.ensure(st)
   st.routes = st.routes or {}
   st.order = st.order or {}
   st.badges = st.badges or 0
+  st.names = type(st.names) == "table" and st.names or {}
+  st.names.sp = type(st.names.sp) == "table" and st.names.sp or {}
+  st.names.loc = type(st.names.loc) == "table" and st.names.loc or {}
   return st
+end
+
+--- Remember a display name read from the game: kind "sp" (species id) or "loc" (location id).
+--- Short, deduplicated per id, limited in count. Returns true when the table changed.
+function S.note_name(st, kind, id, name)
+  if math.type(id) == "float" then id = math.tointeger(id) end
+  if math.type(id) ~= "integer" or type(name) ~= "string" then return false end
+  name = util.clean_text(name, S.NAME_LEN[kind])
+  if not name then return false end
+  S.ensure(st)
+  local t, k = st.names[kind], tostring(id)
+  if t[k] == name then return false end
+  if t[k] == nil then
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    if n >= S.MAX_NAMES[kind] then return false end
+  end
+  t[k] = name
+  return true
 end
 
 --- Death count of a tracked mon (absent = 0).
@@ -60,6 +92,20 @@ function S.compact(st)
   for _, r in pairs(st.routes) do if r.mon then referenced[r.mon] = true end end
   for pid, m in pairs(st.mons) do
     if m.where == "gone" and not referenced[pid] and (m.deaths or 0) == 0 then st.mons[pid] = nil end
+  end
+  if S.size(st) > S.MAX_BYTES then
+    -- names nothing refers to
+    local sp, loc = {}, {}
+    for _, m in pairs(st.mons) do sp[tostring(m.species)] = true end
+    for key, r in pairs(st.routes) do
+      sp[tostring(r.species or "")] = true
+      local id = key:match("^loc:(%d+)$")
+      if id then loc[id] = true end
+    end
+    local pid = st.place and st.place.loc
+    if pid then loc[tostring(pid)] = true end
+    for k in pairs(st.names.sp) do if not sp[k] then st.names.sp[k] = nil end end
+    for k in pairs(st.names.loc) do if not loc[k] then st.names.loc[k] = nil end end
   end
   if S.size(st) > S.MAX_BYTES then
     for _, m in pairs(st.mons) do

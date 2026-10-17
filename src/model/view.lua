@@ -57,7 +57,7 @@ end
 
 local function new_vmon(owner, id, m)
   return {
-    id = id, owner = owner, species = m.species, form = m.form, nickname = m.nickname,
+    id = id, owner = owner, species = m.species, form = m.form, nickname = m.nickname, ty = m.ty,
     nicknamed = m.nicknamed, level = m.level, shiny = m.shiny == true, own_route = m.route,
     where = m.where or "box", hp = m.hp, mhp = m.mhp, base_gift = m.gift == true, why = m.why,
     deaths = m.deaths or 0, manual = 0, undone = 0, virtual = false,
@@ -217,6 +217,47 @@ function V.merge_zones(run, states)
   return out
 end
 
+local function ids_me_first(run, states)
+  local ids = {}
+  for id in pairs(states or {}) do if id ~= run.me then ids[#ids + 1] = id end end
+  table.sort(ids)
+  table.insert(ids, 1, run.me or "")
+  return ids
+end
+
+--- Display names stored in the participants' states (own first; the first name per id wins):
+--- { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } }.
+function V.merge_names(run, states)
+  local out = { sp = {}, loc = {} }
+  for _, id in ipairs(ids_me_first(run, states)) do
+    local nm = states and states[id] and states[id].names
+    if type(nm) == "table" then
+      for kind, dst in pairs(out) do
+        if type(nm[kind]) == "table" then
+          for k, v in pairs(nm[kind]) do
+            if type(v) == "string" and v ~= "" and dst[k] == nil then dst[k] = v end
+          end
+        end
+      end
+    end
+  end
+  return out
+end
+
+--- Encounter areas in game order (location ids): the own list, then ids only others know.
+function V.merge_areas(run, states)
+  local out, seen = {}, {}
+  for _, id in ipairs(ids_me_first(run, states)) do
+    local a = states and states[id] and states[id].areas
+    if type(a) == "table" then
+      for _, lid in ipairs(a) do
+        if math.type(lid) == "integer" and not seen[lid] then seen[lid] = true; out[#out + 1] = lid end
+      end
+    end
+  end
+  return out
+end
+
 function V.view(run, states, events, cfg)
   run, states = run or {}, states or {}
   cfg = cfg and rules.normalize(cfg) or rules.parse(run)
@@ -235,6 +276,12 @@ function V.view(run, states, events, cfg)
   local pindex = {}
   for i, pl in ipairs(players) do pindex[pl.id] = i end
 
+  local names = V.merge_names(run, states)
+  local areas = V.merge_areas(run, states)
+  local order = {}
+  for i, lid in ipairs(areas) do order[oras.area_key(lid)] = i end
+  local function sname(species) return names.sp[tostring(species)] end
+
   local catch_seq, death_seq, effective, invalid = collect_events(events)
   local pv = build_players(players, states, effective, catch_seq, death_seq)
   assign_slots(players, pv)
@@ -249,7 +296,7 @@ function V.view(run, states, events, cfg)
     if w.st.place.key then route_set[w.st.place.key] = true end
   end
   local route_keys = util.keys(route_set)
-  table.sort(route_keys, oras.compare)
+  table.sort(route_keys, function(a, b) return oras.compare(a, b, order) end)
 
   -- groups
   local groups, group_of = {}, {}
@@ -321,7 +368,7 @@ function V.view(run, states, events, cfg)
   table.sort(numbered, function(a, b)
     local sa, sb = a.completed_seq or INF, b.completed_seq or INF
     if sa ~= sb then return sa < sb end
-    return oras.compare(a.route, b.route)
+    return oras.compare(a.route, b.route, order)
   end)
   for i, g in ipairs(numbered) do g.number = i end
 
@@ -333,7 +380,8 @@ function V.view(run, states, events, cfg)
     if not vm.dead and own_dead(vm) then vm.dead, vm.cause = true, "own" end
     local g = vm.slot and group_of[vm.slot]
     return {
-      id = vm.id, owner = vm.owner, species = vm.species, form = vm.form, nickname = vm.nickname,
+      id = vm.id, owner = vm.owner, species = vm.species, species_name = sname(vm.species), form = vm.form,
+      nickname = vm.nickname, ty = vm.ty,
       nicknamed = vm.nicknamed, level = vm.level, shiny = vm.shiny, hp = vm.hp, mhp = vm.mhp,
       route = vm.slot or vm.own_route, where = vm.where, dead = vm.dead == true, cause = vm.cause,
       doa = vm.doa == true, deaths = eff_deaths(vm), gift = is_gift(vm), why = vm.why,
@@ -361,7 +409,8 @@ function V.view(run, states, events, cfg)
       if mv.dead then
         dead = dead + 1
         graveyard[#graveyard + 1] = {
-          owner = pl.id, mon = id, species = mv.species, form = mv.form, nickname = mv.nickname,
+          owner = pl.id, mon = id, species = mv.species, species_name = mv.species_name, form = mv.form,
+          nickname = mv.nickname,
           route = mv.route, group = mv.group, group_number = mv.group_number, cause = mv.cause,
           doa = mv.doa, deaths = mv.deaths, shiny = mv.shiny,
           seq = mv.cause == "own" and (death_seq[mkey(pl.id, id)] or {})[mv.deaths]
@@ -374,7 +423,8 @@ function V.view(run, states, events, cfg)
     end
     stats.alive = stats.alive + alive
     local place = w.st.place
-    local place_view = { key = place.key, name = place.name, zone = place.zone, manual = place.manual == true }
+    local place_view = { key = place.key, name = place.name, zone = place.zone, loc = place.loc,
+                         manual = place.manual == true }
     local badges = w.st.badges or 0
     if badges > stats.badges_max then stats.badges_max = badges end
     out_players[i] = {
@@ -406,22 +456,27 @@ function V.view(run, states, events, cfg)
       if vm then
         local mv = out_players[pindex[pl.id]].mons[vm.id]
         cell.mon, cell.species, cell.nickname, cell.gift = vm.id, mv.species, mv.nickname, mv.gift
+        cell.species_name = mv.species_name
         if mv.dead then cell.state, cell.cause = "dead", mv.cause end
       elseif e then
         cell.species = e.species
+        cell.species_name = sname(e.species)
       end
       if st_ == "open" or st_ == "encounter" then done = false end
       cells[pl.id] = cell
     end
     local g = group_of[r]
-    rows[#rows + 1] = { route = r, order = oras.order_index(r), cells = cells, group = g and {
+    rows[#rows + 1] = { route = r, order = oras.order_index(r, order), cells = cells, group = g and {
       route = g.route, state = g.state, number = g.number, complete = g.complete, count = g.count,
     } or nil, done = done }
     if done then stats.routes_done = stats.routes_done + 1 end
   end
-  stats.routes_total = #oras.ROUTE_KEYS + 1
+  -- starter + every area of the game + free places and legacy routes that have activity
+  stats.routes_total = 1 + #areas
   for _, r in ipairs(route_keys) do
-    if r:sub(1, 6) == "place:" then stats.routes_total = stats.routes_total + 1 end
+    if r:sub(1, 6) == "place:" or oras.route_number(r) or (oras.area_id(r) and not order[r]) then
+      stats.routes_total = stats.routes_total + 1
+    end
   end
 
   -- place status per player (location card)
@@ -444,7 +499,7 @@ function V.view(run, states, events, cfg)
   for _, g in ipairs(groups) do
     local members = {}
     for _, vm in ipairs(g.mons) do
-      members[#members + 1] = { owner = vm.owner, id = vm.id, species = vm.species,
+      members[#members + 1] = { owner = vm.owner, id = vm.id, species = vm.species, species_name = sname(vm.species),
         nickname = vm.nickname, deaths = eff_deaths(vm), dead = vm.dead == true, cause = vm.cause,
         doa = vm.doa == true }
     end
@@ -456,7 +511,7 @@ function V.view(run, states, events, cfg)
   table.sort(group_views, function(a, b)
     local na, nb = a.number or INF, b.number or INF
     if na ~= nb then return na < nb end
-    return oras.compare(a.route, b.route)
+    return oras.compare(a.route, b.route, order)
   end)
 
   -- hints
@@ -490,7 +545,24 @@ function V.view(run, states, events, cfg)
     end
   end
 
+  -- hints: same primary type inside a link group (rule pairs_differ_primary_type, never blocking)
+  if soul and r.pairs_differ_primary_type then
+    for _, g in ipairs(groups) do
+      if g.propagates then
+        local count = {}
+        for _, vm in ipairs(g.mons) do if vm.ty ~= nil then count[vm.ty] = (count[vm.ty] or 0) + 1 end end
+        for _, vm in ipairs(g.mons) do
+          if vm.ty ~= nil and count[vm.ty] > 1 and not own_dead(vm) then
+            hints[#hints + 1] = { code = "type_clash", user = vm.owner, mon = vm.id, route = g.route,
+                                  player_index = pindex[vm.owner] }
+          end
+        end
+      end
+    end
+  end
+
   return {
+    names = names, areas = areas, order = order,
     mode = cfg.mode, rules = cfg.rules, players = out_players, rows = rows, groups = group_views,
     graveyard = graveyard, stats = stats, hints = hints, invalid_corrections = invalid,
     zones = V.merge_zones(run, states),

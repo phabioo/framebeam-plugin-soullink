@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.1 in development. Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.4.0 (compact panel, run screen opened from the game, detection from pokemon-core 0.3). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -10,6 +10,14 @@ Status: v0.1 in development. Depends on FrameBeam plugin API v1 (0.11); see http
 - Views: in-game tab (team, location status, partner of the route, graveyard), HUD, Multiview tile overlay, run screen (routes table routes x players, map, log, graveyard), Hub run board and session view (also as OBS source).
 - Design screens 5a to 5i (Claude Design handoff, accepted 2026-10-11): done, see [design/README.md](design/README.md). Open design questions are listed there.
 - Playtest with the group, then feedback into platform and plugin.
+
+## v0.4.0 panel, run screen, detection from pokemon-core 0.3
+
+- Panel per design 5b at about 300 px (run header, location card, encounter hint, team with partners, graveyard, footer); the full run screen (5e, all corrections) opens with `fb.ui.open("screen")` (button, toast action, Ctrl+R); without that call the panel says to update FrameBeam.
+- Routes are the encounter areas of the game (`areas()`, key `loc:<location id>`), names read from the game and stored short in the own run state so other players, the tile strip and the Hub show names; old `route-N` keys still render.
+- Detection: `encounters()` seq (first per area, hordes, shiny and dupes clause), catch by team/box diff, death by live hp 0 or battle hp 0, badges from `badges()`, pairs-differ-primary-type via `species_info`.
+- Map tab shows an image only after the player confirmed a candidate.
+- Open: level caps and map positions of the areas are recorded with the real game; see `docs/architecture.md` open points.
 
 ## Later
 

@@ -39,33 +39,6 @@ local function boot(core, opts)
   return env
 end
 
-t.case("panel switches to the run view and back; screen slot keeps working", function()
-  local e = boot()
-  e.step()
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "panel"), "live view first")
-  e.act("open_run")
-  local p = e.m.ui.trees.panel
-  t.ok(ui_validator.find(p, "tabs") and ui_validator.find(p, "back"), "run view in the panel")
-  t.ok(not ui_validator.find(p, "panel"))
-  t.ok(ui_validator.find(e.m.ui.trees.screen, "tabs"), "screen slot as before")
-  e.act("panel_back")
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "panel"), "back to live")
-  e.act("open_run", nil, "hotkey") -- Ctrl+R in the manifest is the id open-run
-  t.ok(not ui_validator.find(e.m.ui.trees.panel, "tabs"), "unknown hotkey id ignored")
-  e.act("open-run", nil, "hotkey")
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "tabs"), "Ctrl+R opens")
-  e.act("open-run", nil, "hotkey")
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "panel"), "Ctrl+R toggles back")
-  e.act("open_run") -- toast action
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "tabs"))
-  e.act("open_run")
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "tabs"), "toast action never closes")
-  -- the panel tab is its own: choosing one does not move the screen's tab
-  e.act("tab", 3, "panel")
-  t.eq(ui_validator.find(e.m.ui.trees.panel, "tabs").selected, 3)
-  t.eq(ui_validator.find(e.m.ui.trees.screen, "tabs").selected, 1)
-end)
-
 t.case("icons: lazy fetch, cache, image blocks, no spam on failure", function()
   local seen = {}
   local e = boot({
@@ -163,7 +136,10 @@ t.case("location unsupported: manual picker, no repeated calls", function()
   for _ = 1, 20 do e.step(600) end
   t.eq(n, 1)
   local p = e.m.ui.trees.panel
-  t.ok(ui_validator.find(p, "place-picker") and not ui_validator.find(p, "zone-new"))
+  t.ok(ui_validator.find(p, "place-toggle") and not ui_validator.find(p, "zone-new"), "quiet link")
+  t.ok(not ui_validator.find(p, "place-picker"), "picker collapsed")
+  e.act("place_toggle")
+  t.ok(ui_validator.find(e.m.ui.trees.panel, "place-picker"), "picker after the click")
 end)
 
 t.case("map: scan, candidates with previews, choice, region image", function()
@@ -177,24 +153,28 @@ t.case("map: scan, candidates with previews, choice, region image", function()
     map_image = function(id) fetched = fetched + 1; return png(id == "b two" and 400 or 512, 240) end,
     map_selected = function() return nil end,
   })
-  e.act("open_run")
   e.step(); e.step(3100)
-  local p = e.m.ui.trees.panel
+  local p = e.m.ui.trees.screen
   t.ok(ui_validator.find(p, "map-scan"), "scanning state")
   t.eq(ui_validator.find(p, "map-scan").title, "Reading the map from your game file…")
   state = "ready"
   e.step(3100)
   for _ = 1, 4 do e.step(100) end
-  p = e.m.ui.trees.panel
-  t.eq(ui_validator.find(p, "tabs").tabs[1], "Map")
+  p = e.m.ui.trees.screen
+  t.ok(ui_validator.find(p, "tabs").tabs[1]:find("^Routes"), "Routes first until a map is confirmed")
+  t.eq(ui_validator.find(p, "tabs").tabs[2], "Map")
+  t.eq(ui_validator.find(p, "map"), nil, "no image before the choice")
   t.ok(ui_validator.find(p, "mc-use1") and ui_validator.find(p, "mc-use3"))
   t.eq(fetched, 3, "previews fetched once each")
   t.eq(ui_validator.find(p, "mc-img2").src, "cache:map/cand-2-b_two.png")
   t.ok(e.m.cache_files["map/cand-1-a_one.png"])
+  e.act("tab", 2)
   e.act("map_use", "b two")
+  t.eq(ui_validator.find(e.m.ui.trees.screen, "tabs").tabs[1], "Map", "Map leads once confirmed")
   t.eq(e.m.cache_files["map/choice.txt"], "b two")
   t.eq(e.m.cache_files["map/region.png"], png(400, 240))
-  p = e.m.ui.trees.panel
+  e.act("tab", 1)
+  p = e.m.ui.trees.screen
   local map = ui_validator.find(p, "map")
   t.eq(map.image, "cache:map/region.png"); t.eq(map.image_w, 400); t.eq(map.image_h, 240)
   t.eq(#map.routes, 0, "markers only for routes with positions")
@@ -204,9 +184,9 @@ t.case("map: scan, candidates with previews, choice, region image", function()
 
   -- calibration
   e.act("calib_toggle")
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "calib"))
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "calib"))
   e.act("calib_route", "route-101")
-  t.ok(ui_validator.find(e.m.ui.trees.panel, "map").players[1].id == "cursor", "cursor marker")
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "map").players[1].id == "cursor", "cursor marker")
   t.eq(e.app.ui.calib.x, 200); t.eq(e.app.ui.calib.y, 120)
   e.act("calib_move", "r"); e.act("calib_move", "d")
   e.act("calib_step", 40); e.act("calib_move", "r")
@@ -216,7 +196,7 @@ t.case("map: scan, candidates with previews, choice, region image", function()
   t.eq(e.app.ui.calib.step, 2)
   e.act("calib_set")
   t.eq(e.m.cache_files["map/coords.json"], '{"map":"b two","routes":{"route-101":{"x":250,"y":128}}}')
-  map = ui_validator.find(e.m.ui.trees.panel, "map")
+  map = ui_validator.find(e.m.ui.trees.screen, "map")
   t.eq(#map.routes, 1); t.eq(map.routes[1].id, "route-101"); t.eq(map.routes[1].x, 250)
   -- clamped to the image
   for _ = 1, 20 do e.act("calib_step", 40); e.act("calib_move", "l") end
@@ -231,14 +211,13 @@ t.case("map: scan, candidates with previews, choice, region image", function()
   -- a restart keeps choice and positions without asking the core again
   local cache = util.copy(e.m.cache_files)
   local e2 = boot({ map_candidates = function() error("no scan expected") end }, { cache = cache })
-  e2.act("open_run")
-  local m2 = ui_validator.find(e2.m.ui.trees.panel, "map")
+    local m2 = ui_validator.find(e2.m.ui.trees.screen, "map")
   t.eq(m2.image, "cache:map/region.png")
   t.eq(#m2.routes, 2)
   -- baked-in COORDS are merged under the recorded ones
   oras.COORDS["b two"] = { ["route-103"] = { x = 5, y = 6, area = "w" }, ["route-101"] = { x = 1, y = 1 } }
   e2.act("calib_toggle"); e2.act("calib_toggle")
-  m2 = ui_validator.find(e2.m.ui.trees.panel, "map")
+  m2 = ui_validator.find(e2.m.ui.trees.screen, "map")
   t.eq(#m2.routes, 3)
   oras.COORDS["b two"] = nil
   -- change map
@@ -246,19 +225,25 @@ t.case("map: scan, candidates with previews, choice, region image", function()
   t.eq(e2.m.cache_files["map/choice.txt"], "")
 end)
 
-t.case("map: core's own selection is used; unsupported hides the tab", function()
-  local e = boot({ map_selected = function() return "x" end, map_image = function() return png(100, 80) end })
+t.case("map: the core's own pick is only suggested; unsupported hides the tab", function()
+  local e = boot({ map_selected = function() return "x" end, map_image = function() return png(100, 80) end,
+    map_candidates = function() return { { id = "x", w = 100, h = 80 }, { id = "y", w = 90, h = 90 } } end })
   e.step(); e.step(3100)
-  e.act("open_run")
-  t.eq(ui_validator.find(e.m.ui.trees.panel, "map").image_w, 100)
+  local p = e.m.ui.trees.screen
+  t.eq(ui_validator.find(p, "map"), nil, "never auto-shown")
+  t.eq(e.m.cache_files["map/choice.txt"], nil)
+  t.ok(ui_validator.find(p, "mc-t1").text:find("suggested by the game", 1, true))
+  t.ok(not ui_validator.find(p, "mc-t2").text:find("suggested", 1, true))
+  e.act("tab", 2)
+  e.act("map_use", "x")
+  e.act("tab", 1)
+  t.eq(ui_validator.find(e.m.ui.trees.screen, "map").image_w, 100)
   local e2 = boot({ map_candidates = function() return nil, "unsupported" end, map_selected = function() return nil end })
   e2.step(); e2.step(3100)
-  e2.act("open_run")
-  t.ok(ui_validator.find(e2.m.ui.trees.panel, "tabs").tabs[1]:find("^Routes"))
+    t.ok(ui_validator.find(e2.m.ui.trees.screen, "tabs").tabs[1]:find("^Routes"))
   local e3 = boot() -- core 0.1: functions missing
   e3.step(); e3.step(3100)
-  e3.act("open_run")
-  t.ok(ui_validator.find(e3.m.ui.trees.panel, "tabs").tabs[1]:find("^Routes"))
+    t.ok(ui_validator.find(e3.m.ui.trees.screen, "tabs").tabs[1]:find("^Routes"))
 end)
 
 t.case("map icons and route markers", function()
@@ -266,14 +251,15 @@ t.case("map icons and route markers", function()
   local ok, err = pcall(function()
     local e = boot({
       map_selected = function() return "m1" end, map_image = function() return png(100, 80) end,
+      map_candidates = function() return { { id = "m1", w = 100, h = 80 } } end,
       icon = function() return png(8, 8) end,
     })
     e.act("place_select", "route-101")
     e.step(3100)
     e.world.box[1] = B.rec({ p = 0x77, sp = 12, nick = "Zippy", hp = 30 })
     for _ = 1, 4 do e.step(6000) end
-    e.act("open_run")
-    local map = ui_validator.find(e.m.ui.trees.panel, "map")
+    e.act("map_use", "m1")
+    local map = ui_validator.find(e.m.ui.trees.screen, "map")
     t.eq(map.routes[1].id, "route-101")
     t.eq(map.routes[1].icons[1].src, "cache:icons/12-0.png")
     t.eq(map.players[1].x, 10)

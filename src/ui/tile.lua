@@ -3,9 +3,9 @@ local common = require("ui.common")
 
 local M = {}
 
---- player = view player entry of the tile's owner.
-function M.build(tr, player)
-  return { type = "text", id = "tile", text = tr("tile_strip", { place = common.place_label(player.place, tr), n = player.alive }),
+--- player = view player entry of the tile's owner; view supplies the stored place names.
+function M.build(tr, player, view)
+  return { type = "text", id = "tile", text = tr("tile_strip", { place = common.short(common.place_label(player.place, tr, view), 24), n = player.alive }),
     style = "meta" }
 end
 

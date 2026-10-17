@@ -122,8 +122,7 @@ t.case("state changed only: setState count", function()
   e.act("badges_select", 3)
   t.eq(writes, 1)
   t.eq(e.m.run.states["u-lena"].badges, 3)
-  t.eq(ui_validator.find(e.m.ui.trees.panel, "badges").value, "3 / 8")
-  t.ok(find_text(e.m.ui.trees.panel, "Lv 29"))
+  t.eq(ui_validator.find(e.m.ui.trees.panel, "badges").text, "Badges 3 / 8 · Next cap Lv 29")
 end)
 
 t.case("remote death in a linked group: notice, HUD, view", function()
@@ -236,7 +235,8 @@ t.case("every correction form and screen tab builds valid trees", function()
   for _, f in ipairs(forms) do
     e.act(f[1], f[2])
     t.ok(ui_validator.find(e.m.ui.trees.screen, "corr"), f[1])
-    t.ok(ui_validator.find(e.m.ui.trees.panel, "corr"), f[1] .. " panel")
+    -- the panel only carries the "Doesn't count" form; every other correction lives on the run screen
+    t.eq(ui_validator.find(e.m.ui.trees.panel, "corr") ~= nil, f[1] == "dc_open", f[1] .. " panel")
     e.act("corr_cancel")
   end
   for tab = 1, 4 do
@@ -322,9 +322,11 @@ t.case("map tab only when the core offers a map", function()
   local screen = require("ui.screen")
   local e = boot()
   e.step()
-  t.eq(screen.tab_ids({})[1], "routes")
+  t.eq(screen.tab_ids({}), { "routes", "team", "grave", "log" })
   t.eq(screen.tab_ids({ map = { state = "unsupported" } })[1], "routes")
-  t.eq(screen.tab_ids({ map = { state = "scanning" } })[1], "map")
+  t.eq(screen.tab_ids({ map = { state = "scanning" } }), { "routes", "map", "team", "grave", "log" })
+  t.eq(screen.tab_ids({ map = { state = "choose" } })[1], "routes")
+  t.eq(screen.tab_ids({ map = { state = "ready" } })[1], "map")
 end)
 
 t.case("validator rejects bad trees", function()
@@ -367,7 +369,7 @@ t.case("i18n: every static key used in the sources exists in en and de", functio
     c_confirm_text_ = { "undo_death", "mark_dead", "mark_missed", "revert" },
     group_state_ = { "linked", "open", "dead", "broken", "gift", "nolink" },
     hud_status_ = { "open", "encounter", "caught", "missed", "no_route", "unknown" },
-    ev_why_ = { "extra", "dupe", "shiny", "additional", "gift", "no_place", "horde", "used" },
+    ev_why_ = { "extra", "dupe", "shiny", "additional", "gift", "no_place", "horde", "used", "type" },
     run_status_ = { "starting", "active", "paused", "finished", "abandoned" },
     run_readonly_ = { "paused", "finished", "abandoned" },
     cause_ = { "own", "linked", "nil", "doa" },
@@ -385,7 +387,7 @@ t.case("i18n: every static key used in the sources exists in en and de", functio
   end
 end)
 
-t.case("panel team rows: hp bar, partners, mark dead button", function()
+t.case("panel team rows: hp bar, partners; mark dead lives on the screen", function()
   local e = boot()
   e.act("place_select", "route-101")
   e.world.team[#e.world.team + 1] = B.rec({ p = 0x77, sp = 12, nick = "Zippy", hp = 15, lv = 9 })
@@ -398,11 +400,17 @@ t.case("panel team rows: hp bar, partners, mark dead button", function()
   t.ok(mon, "team row")
   t.eq(ui_validator.find(panel, "m-hp1").value, 0.5)
   t.ok(ui_validator.find(panel, "m-p1-2") or ui_validator.find(panel, "m-p1-1"), "partner avatar")
-  local btn = ui_validator.find(panel, "m-dead1")
-  t.eq(btn.action, "mark_dead"); t.eq(btn.value, "00000077"); t.eq(btn.confirm.danger, true)
   t.ok(find_text(panel, "Zippy · Lv 9"))
-  -- graveyard section opens
-  e.act("mark_dead", "00000077")
+  t.eq(ui_validator.find(panel, "m-dead1"), nil, "no inline 5f actions in the panel")
+  -- the screen's Team & box tab has the button (with the danger confirm)
+  e.act("tab", 3)
+  local btn = ui_validator.find(e.m.ui.trees.screen, "tm-d1")
+  t.ok(btn, "button on the screen")
+  t.eq(btn.action, "dead_open"); t.eq(btn.value, "00000077")
+  e.act("dead_open", "00000077")
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "corr").title)
+  t.eq(ui_validator.find(e.m.ui.trees.screen, "corr-submit").confirm.danger, true)
+  e.act("corr_submit")
   e.act("grave_toggle")
   t.ok(ui_validator.find(e.m.ui.trees.panel, "grave-list"))
 end)
@@ -411,7 +419,7 @@ t.case("package builds and verifies", function()
   local ok = os.execute("python3 -c 'import sys' >/dev/null 2>&1")
   if not ok then return t.skip("python3 not available") end
   local dir = os.tmpname() .. ".d"
-  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.3.1 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/net.framebeam.soullink-0.3.1.fbplugin >/dev/null")
+  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.4.0 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/net.framebeam.soullink-0.4.0.fbplugin >/dev/null")
   t.ok(ok2, "package.py failed")
   local bad = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v9.9.9 >/dev/null 2>&1")
   t.ok(not bad, "tag/version mismatch must fail")

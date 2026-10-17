@@ -1,6 +1,8 @@
 -- Builds the detection snapshot from the `pokemon.core` interface.
 -- Every method may be missing (nil, "unsupported") or not ready (nil, "not_ready"); a missing
 -- part stays nil in the snapshot ("unknown"), which detect.diff handles without inventing data.
+-- Shapes follow pokemon.core v0.3 (location {zone, location, name}, battle {active, kind, horde, foes, own},
+-- encounters [{seq, species, form, shiny, horde, zone, location}], badges {count, flags}).
 local P = {}
 
 P.INTERFACE = "pokemon.core"
@@ -54,6 +56,13 @@ function P.collect(call, opts)
   end
   part("location", "location")
   part("battle", "battle")
+  -- core v0.3: kind = "wild" | "trainer" | nil; the detection reads `wild`
+  if type(snap.battle) == "table" and snap.battle.wild == nil then
+    local b = {}
+    for k, v in pairs(snap.battle) do b[k] = v end
+    b.wild = b.kind == "wild"
+    snap.battle = b
+  end
   part("encounters", "encounters")
   part("badges", "badges")
   return snap, issues
