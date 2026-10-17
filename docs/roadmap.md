@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.4.1 (compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.5.0 (map from the game picture, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -16,7 +16,7 @@ Status: v0.4.1 (compact panel, run screen opened from the game, detection from p
 - Panel per design 5b at about 300 px (run header, location card, encounter hint, team with partners, graveyard, footer); the full run screen (5e, all corrections) opens with `fb.ui.open("screen")` (button, toast action, Ctrl+R); without that call the panel says to update FrameBeam.
 - Routes are the encounter areas of the game (`areas()`, key `loc:<location id>`), names read from the game and stored short in the own run state so other players, the tile strip and the Hub show names; old `route-N` keys still render.
 - Detection: `encounters()` seq (first per area, hordes, shiny and dupes clause), catch by team/box diff, death by live hp 0 or battle hp 0, badges from `badges()`, pairs-differ-primary-type via `species_info`.
-- Map tab shows an image only after the player confirmed a candidate.
+- Map tab: the map is captured from the 3DS bottom screen ("Take map from screen", `fb.video.capture`, permission `video.capture`); the RomFS map candidates of pokemon-core are no longer used. Needs a Player with the game picture API; older Players show an update hint.
 - Open: level caps and map positions of the areas are recorded with the real game; see `docs/architecture.md` open points.
 
 ## v0.4.1 fixes from the first playtest

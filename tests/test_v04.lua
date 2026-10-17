@@ -18,7 +18,7 @@ local function boot(o)
   local run = B.run({ "Lena", "Jonas" })
   run.settings = o.settings or {}
   local m = mock.new({ run = { current = run, states = o.states }, game = { code = "000400000011C400", language = "en" },
-    no_ui_open = o.no_ui_open })
+    no_ui_open = o.no_ui_open, video = true })
   local core = fake_core.new(o.world)
   if o.setup then o.setup(core) end
   m.set_provider("pokemon.core", core.provider)
@@ -221,15 +221,11 @@ t.case("screen: frame, tabs, corrections and rules live here", function()
   t.ok(c.text:find("Synthetic Area Two", 1, true), c.text)
 end)
 
-t.case("screen: map tab shows an image only after the candidate was confirmed", function()
+t.case("screen: map tab shows an image only after the map was taken from the screen", function()
   local SIG = "\137PNG\r\n\26\n"
   local function png(w, h) return SIG .. string.pack(">I4", 13) .. "IHDR" .. string.pack(">I4I4", w, h) .. string.rep("\0", 8) end
   local e = boot()
-  local prov = e.m.providers["pokemon.core"]
-  prov.map_selected = function() return "a" end
-  prov.map_candidates = function() return { { id = "a", w = 100, h = 60 } } end
-  prov.map_image = function() return png(100, 60) end
-  for _ = 1, 3 do e.step(3100) end
+  e.step(3100)
   local s = e.m.ui.trees.screen
   local tabs = ui_validator.find(s, "tabs")
   t.eq(tabs.tabs[1]:sub(1, 6), "Routes")
@@ -237,10 +233,11 @@ t.case("screen: map tab shows an image only after the candidate was confirmed", 
   e.act("tab", 2)
   s = e.m.ui.trees.screen
   t.eq(ui_validator.find(s, "map"), nil)
-  t.ok(ui_validator.find(s, "map-scan").text:find("Routes and catches are listed in the Routes tab", 1, true), "empty state text of 5e")
-  t.ok(ui_validator.find(s, "mc-use1"), "chooser with thumbnails")
-  t.ok(ui_validator.find(s, "mc-img1"))
-  e.act("map_use", "a")
+  t.ok(ui_validator.find(s, "map-empty").text:find("Routes and catches are listed in the Routes tab", 1, true), "empty state text of 5e")
+  t.ok(ui_validator.find(s, "map-take"), "capture button")
+  e.act("map_capture")
+  e.m.video_result(true, png(320, 240), 320, 240)
+  e.step(300)
   e.act("tab", 1)
   t.ok(ui_validator.find(e.m.ui.trees.screen, "map"))
   -- calibration offers the game's areas
@@ -249,7 +246,7 @@ t.case("screen: map tab shows an image only after the candidate was confirmed", 
   t.eq(sel.options[1].value, "loc:301", "calibration offers the encounter areas, not towns")
   e.act("calib_route", "loc:302")
   e.act("calib_set")
-  t.eq(e.m.cache_files["map/coords.json"], '{"map":"a","routes":{"loc:302":{"x":50,"y":30}}}')
+  t.eq(e.m.cache_files["map/coords.json"], '{"map":"000400000011C400","routes":{"loc:302":{"x":160,"y":120}}}')
 end)
 
 -- ---------------------------------------------------------------- routes from the game

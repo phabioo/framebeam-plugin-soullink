@@ -1,8 +1,7 @@
 -- Run screen (design 5e), shown in the `screen` slot (and, read only, in the `run` slot of the Runs page):
 -- frame with tabs Map | Routes | Team & box | Graveyard | Event log. All manual corrections (5f) live here.
--- The Map tab only shows an image after the player confirmed a candidate (app.maps); until then the
--- Routes tab comes first and the Map tab shows the empty state (and the candidate chooser once the
--- game files were scanned).
+-- The Map tab shows the map captured from the game picture (app.maps); until then the Routes tab comes
+-- first and the Map tab shows the instruction and the "Take map from screen" button.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -15,8 +14,8 @@ function M.empty(tr)
   return { type = "column", gap = 12, children = { common.empty(tr, "empty_title", "empty_screen") } }
 end
 
-local MAP_STATES = { ready = true, choose = true, scanning = true }
-function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and MAP_STATES[ctx.map.state] == true end
+--- The Map tab exists with an image, and in a live run (to take the map); not in the shell run view without one.
+function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and (ctx.map.state == "ready" or ctx.map.live == true) end
 
 local RULE_ORDER = { "first_encounter_only", "dupes_clause", "shiny_clause", "hordes_count",
   "pairs_differ_primary_type", "only_linked_in_team", "nickname_required", "level_caps" }
@@ -284,22 +283,21 @@ local function calibration(ctx, m)
   return { type = "section", id = "calib", title = tr("calib_title"), children = kids }
 end
 
-local function candidates(ctx, m)
+local MAP_ERRORS = { busy = true, rate_limited = true, no_frame = true, unknown_screen = true, invalid_rect = true,
+  too_large = true, unsupported = true, denied = true, failed = true }
+
+--- Instruction, capture state and the error of the last try, then the capture button.
+local function capture_block(ctx, m, retake)
   local tr = ctx.tr
-  local kids = { { type = "text", id = "mc-hint", text = tr("map_choose_hint"), style = "meta" } }
-  if #m.candidates == 0 then
-    kids[#kids + 1] = { type = "text", id = "mc-none", text = tr("map_none"), style = "meta" }
+  local kids = {}
+  if not retake then
+    kids[#kids + 1] = { type = "text", id = "map-hint", text = tr("map_hint"), style = "meta" }
   end
-  for i, c in ipairs(m.candidates) do
-    local row = {}
-    if c.src then row[#row + 1] = { type = "image", id = "mc-img" .. i, src = c.src, size = "l", label = tr("map_cand", { n = i }) } end
-    local label = tr("map_cand_size", { n = i, w = c.w or "?", h = c.h or "?" })
-    if c.suggested then label = label .. " · " .. tr("map_suggested") end
-    row[#row + 1] = { type = "column", id = "mc-col" .. i, gap = 4, children = {
-      { type = "text", id = "mc-t" .. i, text = label, style = "body" },
-      { type = "button", id = "mc-use" .. i, label = tr("map_use"), action = "map_use", value = c.id, variant = "secondary" },
-    } }
-    kids[#kids + 1] = { type = "row", id = "mc-row" .. i, gap = 12, align = "center", children = row }
+  if m.pending then
+    kids[#kids + 1] = { type = "text", id = "map-wait", text = tr("map_waiting"), style = "meta" }
+  elseif m.error then
+    kids[#kids + 1] = { type = "text", id = "map-error", style = "meta",
+      text = tr("map_err_" .. (MAP_ERRORS[m.error] and m.error or "failed")) }
   end
   return kids
 end
@@ -307,10 +305,16 @@ end
 local function map_page(ctx)
   local view, m, tr = ctx.view, ctx.map, ctx.tr
   if m.state ~= "ready" then
-    -- no image before the player confirmed a candidate: empty state (5e), then the chooser
-    local kids = { { type = "empty", id = "map-scan", title = tr("map_scanning"), text = tr("map_empty_text") } }
-    if m.state == "choose" then
-      for _, b in ipairs(candidates(ctx, m)) do kids[#kids + 1] = b end
+    -- no image yet: empty state (5e), instruction and the capture button; older Player: update hint
+    if not m.api then
+      return { type = "column", id = "page-map", gap = 12, children = {
+        { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_no_api") } } }
+    end
+    local kids = { { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_empty_text") } }
+    for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
+    if m.live then
+      kids[#kids + 1] = { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture",
+        variant = "primary" }
     end
     return { type = "column", id = "page-map", gap = 12, children = kids }
   end
@@ -349,12 +353,15 @@ local function map_page(ctx)
   local map = { type = "map", id = "map", players = players, routes = routes, filter = ctx.ui.map_filter or "all",
     me = ctx.me, legend = true, action = "map_select", image = m.src, image_w = m.w, image_h = m.h }
   if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
-  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = {
-    { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
-      variant = calib and "primary" or "quiet" },
-    { type = "button", id = "map-change", label = tr("map_change"), action = "map_reset", variant = "quiet",
-      confirm = { title = tr("map_change_title"), text = tr("map_change_text"), confirm_label = tr("map_change") } },
-  } } }
+  local acts = { { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
+    variant = calib and "primary" or "quiet" } }
+  if m.live and m.api then
+    acts[#acts + 1] = { type = "button", id = "map-retake", label = tr("map_retake"), action = "map_capture", variant = "quiet" }
+  end
+  acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
+    confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
+  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
+  for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
   if calib then kids[#kids + 1] = calibration(ctx, m) end
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end

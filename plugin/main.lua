@@ -237,7 +237,7 @@ function A:start()
   -- run view: no game, so no core calls, no tracking, no notices; only the `run` slot shows the run
   if self.viewing then self.sync:push("screen", screen.empty(tr)) end
   self.icons = icons_mod.new(fb)
-  self.maps = maps_mod.new(fb)
+  self.maps = maps_mod.new(fb, not self.viewing)
   self.st = state.ensure(util.copy(fb.run.state()))
   self.last_enc = (not self.viewing and fb.run.state()) and util.encode(self.st) or nil
   self:load_events()
@@ -248,6 +248,9 @@ function A:start()
   fb.run.on("status", function() self.dirty = true end)
   if not self.viewing then
     fb.events.on("fb", "tiles", function(list) self.tiles = type(list) == "table" and list or {}; self.dirty = true end)
+    if self.maps.api then
+      fb.events.on("fb", "video.captured", function(e) if self.maps:on_captured(e) then self.dirty = true end end)
+    end
   end
   fb.on_tick(function() self:tick() end)
   self:poll(true)
@@ -286,7 +289,6 @@ function A:tick()
     local ok, err = pcall(self.poll, self, full)
     if not ok then warn_once(self, "poll", "poll failed: " .. tostring(err)) end
   end
-  if not self.viewing and self.maps and self.maps:step(now) then self.dirty = true end
   if not self.viewing and self.icons and self.icons:pump(now) then self.dirty = true end
   if self.hud_until and now >= self.hud_until then
     self.hud_until, self.hud_text = nil, nil
@@ -645,10 +647,10 @@ end
 function A:map_action(action, value)
   local m, c = self.maps, self.ui.calib
   if not m then return end
-  if action == "map_use" then
-    if type(value) == "string" then m:adopt(value) end
-  elseif action == "map_reset" then
-    m:reset()
+  if action == "map_capture" then
+    m:capture()
+  elseif action == "map_remove" then
+    m:remove()
     self.ui.calib = nil
   elseif action == "calib_toggle" then
     self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
@@ -909,27 +911,23 @@ return I
 
 end
 __mod["app.maps"] = function(...)
--- Region map from the player's own game: pokemon-core `map_candidates()` lists large images of the
--- game files, `map_image(id)` returns one as PNG, `map_selected()` is the core's own pick. The
--- player always confirms one (the core's pick is only marked "suggested", never shown as the map
--- on its own); the choice and the image are kept in the own cache:
---   map/choice.txt   map id of the choice ("" = none)
---   map/region.png   the chosen image
---   map/cand-<n>-<id>.png   previews of the candidates
---   map/coords.json  { map = id, routes = { [route key] = { x, y } } } recorded by the player
--- Route positions on the image are our own recorded facts (data.oras.COORDS[map id]) merged under
--- the recorded ones. Core calls are pcalled, a few per tick.
+-- Region map from the game picture: the player opens the map in the game on the 3DS bottom screen and
+-- "Take map from screen" captures it with fb.video.capture (permission video.capture, Player 0.11+ with
+-- the game picture API). The PNG stays in the own cache of this player (never in the run state):
+--   map/<game id>.png   the captured map (empty file = removed)
+--   map/current.txt     game id of the last capture (the run view in the shell has no game id)
+--   map/coords.json     { map = game id, routes = { [route key] = { x, y } } } recorded by the player
+-- Route positions on the image are our own recorded facts (data.oras.COORDS[game id]) merged under the
+-- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older Player) the
+-- Map tab says so; nothing else depends on it.
 local util = require("model.util")
 local oras = require("data.oras")
 
 local M = {}
 M.__index = M
 
-M.CORE = "pokemon.core"
-M.REGION, M.CHOICE, M.COORDS_FILE = "map/region.png", "map/choice.txt", "map/coords.json"
-M.MAX_CANDIDATES = 24
-M.PER_TICK = 2
-M.RETRY_MS = 3000
+M.COORDS_FILE, M.CURRENT = "map/coords.json", "map/current.txt"
+M.NO_GAME = "game"
 
 --- Width and height from a PNG header, or nil.
 function M.png_size(s)
@@ -941,9 +939,12 @@ end
 
 local function safe(id) return (tostring(id):gsub("[^%w_%-]", "_"):sub(1, 60)) end
 
-function M.new(fb)
-  local self = setmetatable({ fb = fb, state = "none", cands = {}, preview = {}, failed = {}, retry_at = {},
-                              coords = {}, next_at = 0 }, M)
+--- `live` = false in the shell run view (no game: nothing to capture). Game id = fb.game.code.
+function M.new(fb, live)
+  local code = type(fb.game) == "table" and fb.game.code or nil
+  local self = setmetatable({ fb = fb, state = "none", coords = {}, live = live ~= false,
+                              api = type(fb.video) == "table" and type(fb.video.capture) == "function" }, M)
+  self.game = (type(code) == "string" and code ~= "") and code or nil
   self:restore()
   return self
 end
@@ -957,20 +958,18 @@ function M:write(name, data)
   return (pcall(self.fb.cache.write, name, data))
 end
 
-function M:call(fn, ...)
-  local ok, a, b = pcall(self.fb.call, M.CORE, fn, ...)
-  return ok, a, b
-end
+function M:file() return "map/" .. safe(self.id or M.NO_GAME) .. ".png" end
 
---- Restore the choice and the recorded positions from the cache.
+--- Restore the image and the recorded positions from the cache.
 function M:restore()
-  local choice = self:read(M.CHOICE)
-  choice = type(choice) == "string" and choice:match("^%s*(.-)%s*$") or ""
-  local png = choice ~= "" and self:read(M.REGION) or nil
-  local w, h = M.png_size(png)
-  if w then
-    self.id, self.w, self.h, self.state = choice, w, h, "ready"
+  self.id = self.game
+  if not self.id then
+    local cur = self:read(M.CURRENT)
+    self.id = (type(cur) == "string" and cur:match("^%s*(.-)%s*$") ~= "") and cur:match("^%s*(.-)%s*$") or nil
   end
+  local png = self.id and self:read(self:file()) or nil
+  local w, h = M.png_size(png)
+  if w then self.w, self.h, self.state = w, h, "ready" end
   self:load_coords()
 end
 
@@ -1031,92 +1030,64 @@ function M:export_line()
   return line
 end
 
---- Use the image `id` as the region map. Returns true on success.
-function M:adopt(id)
-  local png
-  local pv = self.preview[id]
-  if pv then png = self:read(pv) end
-  if not png then
-    local ok, p = self:call("map_image", id)
-    png = ok and p or nil
+--- Screen to capture: "bottom", else "main", else nil (no game / no such screen).
+function M:target()
+  local ok, list = pcall(self.fb.video.screens)
+  if not ok or type(list) ~= "table" then return nil end
+  local has = {}
+  for _, sc in ipairs(list) do if type(sc) == "table" then has[sc.name] = true end end
+  return (has.bottom and "bottom") or (has.main and "main") or nil
+end
+
+--- Start a capture of the game picture. Returns true when a request is pending.
+function M:capture()
+  self.error = nil
+  if not self.api then return false end
+  if not self.live or not self.game then self.error = "unsupported"; return false end
+  if self.pending then self.error = "busy"; return false end
+  local target = self:target()
+  if not target then self.error = "no_frame"; return false end
+  local ok, id = pcall(self.fb.video.capture, target)
+  if not ok then
+    self.fb.log.warn("soullink map capture: " .. tostring(id))
+    self.error = "failed"
+    return false
   end
-  local w, h = M.png_size(png)
-  if not w then return false end
-  if not (self:write(M.REGION, png) and self:write(M.CHOICE, id)) then return false end
-  self.id, self.w, self.h, self.state = id, w, h, "ready"
-  self.cands, self.preview = {}, {}
+  self.pending = id
+  return true
+end
+
+--- Host event video.captured { id, ok, png, w, h, error }. Returns true when the view changed.
+function M:on_captured(e)
+  if type(e) ~= "table" or not self.pending or e.id ~= self.pending then return false end
+  self.pending = nil
+  if e.ok ~= true then
+    self.error = type(e.error) == "string" and e.error or "failed"
+    return true
+  end
+  local w, h = M.png_size(e.png)
+  if not w then self.error = "failed"; return true end
+  self.id = self.game
+  if not (self:write(self:file(), e.png) and self:write(M.CURRENT, self.id)) then
+    self.error = "failed"
+    return true
+  end
+  self.w, self.h, self.state, self.error = w, h, "ready", nil
   self:load_coords()
   return true
 end
 
---- Forget the choice (the image stays in the cache); candidates are scanned again.
-function M:reset()
-  self:write(M.CHOICE, "")
-  self.id, self.w, self.h, self.state = nil, nil, nil, "none"
-  self.cands, self.preview, self.failed, self.retry_at, self.coords = {}, {}, {}, {}, {}
-  self.next_at = 0
+--- Remove the map image; the recorded positions stay.
+function M:remove()
+  if self.state == "ready" then self:write(self:file(), "") end
+  self.w, self.h, self.state, self.error = nil, nil, "none", nil
 end
 
---- Scan / fetch previews. Returns true when the view changed.
-function M:step(now)
-  if self.state == "ready" or self.state == "unsupported" then return false end
-  if self.state == "none" or self.state == "scanning" then
-    if now < self.next_at then return false end
-    local ok, sel = self:call("map_selected")
-    if not ok then self.state = "unsupported"; return true end
-    self.suggested = (type(sel) == "string" and sel ~= "") and sel or nil -- marked, never adopted
-    local ok2, list, why = self:call("map_candidates")
-    if not ok2 then self.state = "unsupported"; return true end
-    if type(list) ~= "table" then
-      if why == "not_ready" then
-        local changed = self.state ~= "scanning"
-        self.state, self.next_at = "scanning", now + M.RETRY_MS
-        return changed
-      end
-      self.state = "unsupported"
-      return true
-    end
-    for _, c in ipairs(list) do
-      if #self.cands >= M.MAX_CANDIDATES then break end
-      if type(c) == "table" and type(c.id) == "string" and c.id ~= "" then
-        self.cands[#self.cands + 1] = { id = c.id, w = c.w, h = c.h }
-      end
-    end
-    self.state = "choose"
-    return true
-  end
-  -- choose: previews, a few per tick
-  local changed, n = false, 0
-  for i, c in ipairs(self.cands) do
-    if n >= M.PER_TICK then break end
-    if not self.preview[c.id] and not self.failed[c.id] and now >= (self.retry_at[c.id] or 0) then
-      n = n + 1
-      local ok, png, why = self:call("map_image", c.id)
-      local name = "map/cand-" .. i .. "-" .. safe(c.id) .. ".png"
-      if ok and type(png) == "string" and M.png_size(png) and self:write(name, png) then
-        self.preview[c.id], changed = name, true
-      elseif ok and why == "not_ready" then
-        self.retry_at[c.id] = now + M.RETRY_MS
-      else
-        self.failed[c.id], changed = true, true
-      end
-    end
-  end
-  return changed
-end
-
---- What the UI needs: { state = none|scanning|choose|ready|unsupported, src?, w?, h?, id?,
---- candidates = {{id, w, h, src?, failed?}}, coords }.
+--- What the UI needs: { state = none|ready, api, live, pending, error?, src?, w?, h?, id?, coords }.
 function M:view()
-  local cands = {}
-  for _, c in ipairs(self.cands) do
-    local pv = self.preview[c.id]
-    cands[#cands + 1] = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = self.failed[c.id],
-      suggested = self.suggested ~= nil and self.suggested == c.id or nil }
-  end
-  return { state = self.state, id = self.id, w = self.w, h = self.h,
-           src = self.state == "ready" and ("cache:" .. M.REGION) or nil,
-           candidates = cands, coords = self:merged() }
+  return { state = self.state, id = self.id, w = self.w, h = self.h, api = self.api, live = self.live,
+           pending = self.pending ~= nil, error = self.error,
+           src = self.state == "ready" and ("cache:" .. self:file()) or nil, coords = self:merged() }
 end
 
 return M
@@ -1206,9 +1177,8 @@ M.LAST_ROUTE = 134
 --- (`zones`) and merged across all players (model.view.merge_zones).
 M.ZONES = {}
 M.ZONE_TO_ROUTE = M.ZONES -- old name
-
---- Route positions on the region map image, keyed by the map id that pokemon-core reports
---- (`map_candidates()` / `map_selected()`): COORDS[map id][route key] = { x, y, area? } in image
+--- Route positions on the region map image, keyed by the game id (`fb.game.code`):
+--- COORDS[game id][route key] = { x, y, area? } in image
 --- pixels. Our own recorded facts, EMPTY for now: positions are recorded in the Map tab
 --- ("Place routes") and exported with "Export positions".
 M.COORDS = {}
@@ -3686,9 +3656,8 @@ end
 __mod["ui.screen"] = function(...)
 -- Run screen (design 5e), shown in the `screen` slot (and, read only, in the `run` slot of the Runs page):
 -- frame with tabs Map | Routes | Team & box | Graveyard | Event log. All manual corrections (5f) live here.
--- The Map tab only shows an image after the player confirmed a candidate (app.maps); until then the
--- Routes tab comes first and the Map tab shows the empty state (and the candidate chooser once the
--- game files were scanned).
+-- The Map tab shows the map captured from the game picture (app.maps); until then the Routes tab comes
+-- first and the Map tab shows the instruction and the "Take map from screen" button.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -3701,8 +3670,8 @@ function M.empty(tr)
   return { type = "column", gap = 12, children = { common.empty(tr, "empty_title", "empty_screen") } }
 end
 
-local MAP_STATES = { ready = true, choose = true, scanning = true }
-function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and MAP_STATES[ctx.map.state] == true end
+--- The Map tab exists with an image, and in a live run (to take the map); not in the shell run view without one.
+function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and (ctx.map.state == "ready" or ctx.map.live == true) end
 
 local RULE_ORDER = { "first_encounter_only", "dupes_clause", "shiny_clause", "hordes_count",
   "pairs_differ_primary_type", "only_linked_in_team", "nickname_required", "level_caps" }
@@ -3970,22 +3939,21 @@ local function calibration(ctx, m)
   return { type = "section", id = "calib", title = tr("calib_title"), children = kids }
 end
 
-local function candidates(ctx, m)
+local MAP_ERRORS = { busy = true, rate_limited = true, no_frame = true, unknown_screen = true, invalid_rect = true,
+  too_large = true, unsupported = true, denied = true, failed = true }
+
+--- Instruction, capture state and the error of the last try, then the capture button.
+local function capture_block(ctx, m, retake)
   local tr = ctx.tr
-  local kids = { { type = "text", id = "mc-hint", text = tr("map_choose_hint"), style = "meta" } }
-  if #m.candidates == 0 then
-    kids[#kids + 1] = { type = "text", id = "mc-none", text = tr("map_none"), style = "meta" }
+  local kids = {}
+  if not retake then
+    kids[#kids + 1] = { type = "text", id = "map-hint", text = tr("map_hint"), style = "meta" }
   end
-  for i, c in ipairs(m.candidates) do
-    local row = {}
-    if c.src then row[#row + 1] = { type = "image", id = "mc-img" .. i, src = c.src, size = "l", label = tr("map_cand", { n = i }) } end
-    local label = tr("map_cand_size", { n = i, w = c.w or "?", h = c.h or "?" })
-    if c.suggested then label = label .. " · " .. tr("map_suggested") end
-    row[#row + 1] = { type = "column", id = "mc-col" .. i, gap = 4, children = {
-      { type = "text", id = "mc-t" .. i, text = label, style = "body" },
-      { type = "button", id = "mc-use" .. i, label = tr("map_use"), action = "map_use", value = c.id, variant = "secondary" },
-    } }
-    kids[#kids + 1] = { type = "row", id = "mc-row" .. i, gap = 12, align = "center", children = row }
+  if m.pending then
+    kids[#kids + 1] = { type = "text", id = "map-wait", text = tr("map_waiting"), style = "meta" }
+  elseif m.error then
+    kids[#kids + 1] = { type = "text", id = "map-error", style = "meta",
+      text = tr("map_err_" .. (MAP_ERRORS[m.error] and m.error or "failed")) }
   end
   return kids
 end
@@ -3993,10 +3961,16 @@ end
 local function map_page(ctx)
   local view, m, tr = ctx.view, ctx.map, ctx.tr
   if m.state ~= "ready" then
-    -- no image before the player confirmed a candidate: empty state (5e), then the chooser
-    local kids = { { type = "empty", id = "map-scan", title = tr("map_scanning"), text = tr("map_empty_text") } }
-    if m.state == "choose" then
-      for _, b in ipairs(candidates(ctx, m)) do kids[#kids + 1] = b end
+    -- no image yet: empty state (5e), instruction and the capture button; older Player: update hint
+    if not m.api then
+      return { type = "column", id = "page-map", gap = 12, children = {
+        { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_no_api") } } }
+    end
+    local kids = { { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_empty_text") } }
+    for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
+    if m.live then
+      kids[#kids + 1] = { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture",
+        variant = "primary" }
     end
     return { type = "column", id = "page-map", gap = 12, children = kids }
   end
@@ -4035,12 +4009,15 @@ local function map_page(ctx)
   local map = { type = "map", id = "map", players = players, routes = routes, filter = ctx.ui.map_filter or "all",
     me = ctx.me, legend = true, action = "map_select", image = m.src, image_w = m.w, image_h = m.h }
   if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
-  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = {
-    { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
-      variant = calib and "primary" or "quiet" },
-    { type = "button", id = "map-change", label = tr("map_change"), action = "map_reset", variant = "quiet",
-      confirm = { title = tr("map_change_title"), text = tr("map_change_text"), confirm_label = tr("map_change") } },
-  } } }
+  local acts = { { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
+    variant = calib and "primary" or "quiet" } }
+  if m.live and m.api then
+    acts[#acts + 1] = { type = "button", id = "map-retake", label = tr("map_retake"), action = "map_capture", variant = "quiet" }
+  end
+  acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
+    confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
+  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
+  for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
   if calib then kids[#kids + 1] = calibration(ctx, m) end
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end
