@@ -16,7 +16,8 @@ local function png(w, h) return SIG .. string.pack(">I4", 13) .. "IHDR" .. strin
 local function boot(core, opts)
   opts = opts or {}
   local run = B.run({ "Lena", "Jonas" })
-  local m = mock.new({ run = { current = run }, game = { code = "000400000011C400", language = "en" } })
+  local m = mock.new({ run = { current = run }, game = { code = "000400000011C400", language = "en" },
+    video = (not opts.no_video) and (opts.video or true) or nil })
   for k, v in pairs(opts.cache or {}) do m.cache_files[k] = v end
   local world = { team = { B.rec({ p = 0xB1, sp = 900, hp = 30 }) }, box = {} }
   local provider = {
@@ -142,62 +143,56 @@ t.case("location unsupported: manual picker, no repeated calls", function()
   t.ok(ui_validator.find(e.m.ui.trees.panel, "place-picker"), "picker after the click")
 end)
 
-t.case("map: scan, candidates with previews, choice, region image", function()
-  local state = "not_ready"
-  local fetched = 0
-  local e = boot({
-    map_candidates = function()
-      if state == "not_ready" then return nil, "not_ready" end
-      return { { id = "a/one", w = 512, h = 256 }, { id = "b two", w = 400, h = 240 }, { id = "c", w = 300, h = 300 } }
-    end,
-    map_image = function(id) fetched = fetched + 1; return png(id == "b two" and 400 or 512, 240) end,
-    map_selected = function() return nil end,
-  })
-  e.step(); e.step(3100)
-  local p = e.m.ui.trees.screen
-  t.ok(ui_validator.find(p, "map-scan"), "scanning state")
-  t.eq(ui_validator.find(p, "map-scan").title, "Reading the map from your game file…")
-  state = "ready"
-  e.step(3100)
-  for _ = 1, 4 do e.step(100) end
-  p = e.m.ui.trees.screen
-  t.ok(ui_validator.find(p, "tabs").tabs[1]:find("^Routes"), "Routes first until a map is confirmed")
-  t.eq(ui_validator.find(p, "tabs").tabs[2], "Map")
-  t.eq(ui_validator.find(p, "map"), nil, "no image before the choice")
-  t.ok(ui_validator.find(p, "mc-use1") and ui_validator.find(p, "mc-use3"))
-  t.eq(fetched, 3, "previews fetched once each")
-  t.eq(ui_validator.find(p, "mc-img2").src, "cache:map/cand-2-b_two.png")
-  t.ok(e.m.cache_files["map/cand-1-a_one.png"])
+local function take_map(e, w, h)
   e.act("tab", 2)
-  e.act("map_use", "b two")
-  t.eq(ui_validator.find(e.m.ui.trees.screen, "tabs").tabs[1], "Map", "Map leads once confirmed")
-  t.eq(e.m.cache_files["map/choice.txt"], "b two")
-  t.eq(e.m.cache_files["map/region.png"], png(400, 240))
+  e.act("map_capture")
+  e.m.video_result(true, png(w or 320, h or 240), w or 320, h or 240)
+  e.step(300)
   e.act("tab", 1)
+end
+
+t.case("map: capture from the bottom screen, calibration, retake keeps positions, remove", function()
+  local e = boot()
+  e.step()
+  local p = e.m.ui.trees.screen
+  t.ok(ui_validator.find(p, "tabs").tabs[1]:find("^Routes"), "Routes first until a map was taken")
+  t.eq(ui_validator.find(p, "tabs").tabs[2], "Map")
+  e.act("tab", 2)
   p = e.m.ui.trees.screen
-  local map = ui_validator.find(p, "map")
-  t.eq(map.image, "cache:map/region.png"); t.eq(map.image_w, 400); t.eq(map.image_h, 240)
+  t.eq(ui_validator.find(p, "map"), nil, "no image before the capture")
+  t.ok(ui_validator.find(p, "map-hint").text:find("PokéNav AreaNav", 1, true), "instruction")
+  t.eq(ui_validator.find(p, "map-take").label, "Take map from screen")
+  e.act("map_capture")
+  t.eq(e.m.video.requests[1].target, "bottom")
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "map-wait"), "waiting text")
+  e.act("map_capture")
+  t.eq(#e.m.video.requests, 1, "one pending request at a time")
+  e.m.video_result(true, png(320, 240), 320, 240)
+  e.step(300)
+  t.eq(e.m.cache_files["map/000400000011C400.png"], png(320, 240))
+  t.eq(ui_validator.find(e.m.ui.trees.screen, "tabs").tabs[1], "Map", "Map leads once taken")
+  e.act("tab", 1)
+  local map = ui_validator.find(e.m.ui.trees.screen, "map")
+  t.eq(map.image, "cache:map/000400000011C400.png"); t.eq(map.image_w, 320); t.eq(map.image_h, 240)
   t.eq(#map.routes, 0, "markers only for routes with positions")
-  local before = fetched
-  for _ = 1, 5 do e.step(3100) end
-  t.eq(fetched, before, "no more core calls once chosen")
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "map-retake") and ui_validator.find(e.m.ui.trees.screen, "map-remove"))
 
   -- calibration
   e.act("calib_toggle")
   t.ok(ui_validator.find(e.m.ui.trees.screen, "calib"))
   e.act("calib_route", "route-101")
   t.ok(ui_validator.find(e.m.ui.trees.screen, "map").players[1].id == "cursor", "cursor marker")
-  t.eq(e.app.ui.calib.x, 200); t.eq(e.app.ui.calib.y, 120)
+  t.eq(e.app.ui.calib.x, 160); t.eq(e.app.ui.calib.y, 120)
   e.act("calib_move", "r"); e.act("calib_move", "d")
   e.act("calib_step", 40); e.act("calib_move", "r")
   e.act("calib_step", 2); e.act("calib_move", "u")
-  t.eq(e.app.ui.calib.x, 250); t.eq(e.app.ui.calib.y, 128)
+  t.eq(e.app.ui.calib.x, 210); t.eq(e.app.ui.calib.y, 128)
   e.act("calib_step", 7) -- not one of 2/10/40
   t.eq(e.app.ui.calib.step, 2)
   e.act("calib_set")
-  t.eq(e.m.cache_files["map/coords.json"], '{"map":"b two","routes":{"route-101":{"x":250,"y":128}}}')
+  t.eq(e.m.cache_files["map/coords.json"], '{"map":"000400000011C400","routes":{"route-101":{"x":210,"y":128}}}')
   map = ui_validator.find(e.m.ui.trees.screen, "map")
-  t.eq(#map.routes, 1); t.eq(map.routes[1].id, "route-101"); t.eq(map.routes[1].x, 250)
+  t.eq(#map.routes, 1); t.eq(map.routes[1].id, "route-101"); t.eq(map.routes[1].x, 210)
   -- clamped to the image
   for _ = 1, 20 do e.act("calib_step", 40); e.act("calib_move", "l") end
   t.eq(e.app.ui.calib.x, 0)
@@ -206,64 +201,105 @@ t.case("map: scan, candidates with previews, choice, region image", function()
   e.act("calib_export")
   local line
   for _, l in ipairs(e.m.logs) do if l.text:find("soullink positions:", 1, true) then line = l.text end end
-  t.eq(line, 'soullink positions: COORDS["b two"] = { ["route-101"] = { x = 250, y = 128 }, ["route-102"] = { x = 200, y = 120 } }')
+  t.eq(line, 'soullink positions: COORDS["000400000011C400"] = { ["route-101"] = { x = 210, y = 128 }, ["route-102"] = { x = 160, y = 120 } }')
 
-  -- a restart keeps choice and positions without asking the core again
+  -- retake: new image, same positions (also when the size differs)
+  e.act("calib_toggle")
+  e.act("map_capture")
+  t.eq(#e.m.video.requests, 2)
+  e.m.video_result(true, png(400, 240), 400, 240)
+  e.step(300)
+  map = ui_validator.find(e.m.ui.trees.screen, "map")
+  t.eq(map.image_w, 400); t.eq(#map.routes, 2, "positions kept after the retake")
+  t.eq(e.m.cache_files["map/000400000011C400.png"], png(400, 240))
+
+  -- a restart keeps image and positions without a capture
   local cache = util.copy(e.m.cache_files)
-  local e2 = boot({ map_candidates = function() error("no scan expected") end }, { cache = cache })
-    local m2 = ui_validator.find(e2.m.ui.trees.screen, "map")
-  t.eq(m2.image, "cache:map/region.png")
+  local e2 = boot(nil, { cache = cache })
+  e2.step()
+  local m2 = ui_validator.find(e2.m.ui.trees.screen, "map")
+  t.eq(m2.image, "cache:map/000400000011C400.png")
   t.eq(#m2.routes, 2)
+  t.eq(#e2.m.video.requests, 0)
   -- baked-in COORDS are merged under the recorded ones
-  oras.COORDS["b two"] = { ["route-103"] = { x = 5, y = 6, area = "w" }, ["route-101"] = { x = 1, y = 1 } }
+  oras.COORDS["000400000011C400"] = { ["route-103"] = { x = 5, y = 6, area = "w" }, ["route-101"] = { x = 1, y = 1 } }
   e2.act("calib_toggle"); e2.act("calib_toggle")
   m2 = ui_validator.find(e2.m.ui.trees.screen, "map")
   t.eq(#m2.routes, 3)
-  oras.COORDS["b two"] = nil
-  -- change map
-  e2.act("map_reset")
-  t.eq(e2.m.cache_files["map/choice.txt"], "")
+  oras.COORDS["000400000011C400"] = nil
+  -- remove: image gone, positions stay, the capture offer is back
+  e2.act("map_remove")
+  t.eq(e2.m.cache_files["map/000400000011C400.png"], "")
+  t.eq(ui_validator.find(e2.m.ui.trees.screen, "map"), nil)
+  t.ok(ui_validator.find(e2.m.ui.trees.screen, "tabs").tabs[1]:find("^Routes"))
+  t.ok(e2.m.cache_files["map/coords.json"]:find("route-101", 1, true), "positions stay")
+  take_map(e2, 320, 240)
+  t.eq(#ui_validator.find(e2.m.ui.trees.screen, "map").routes, 2, "positions apply to the next map")
 end)
 
-t.case("map: the core's own pick is only suggested; unsupported hides the tab", function()
-  local e = boot({ map_selected = function() return "x" end, map_image = function() return png(100, 80) end,
-    map_candidates = function() return { { id = "x", w = 100, h = 80 }, { id = "y", w = 90, h = 90 } } end })
-  e.step(); e.step(3100)
+t.case("map: screens fall back to main, errors are shown per code", function()
+  local e = boot(nil, { video = { screens = { { name = "main", x = 0, y = 0, w = 240, h = 160 } } } })
+  e.step(); e.act("tab", 2)
+  e.act("map_capture")
+  t.eq(e.m.video.requests[1].target, "main")
+  local codes = { "busy", "rate_limited", "no_frame", "unknown_screen", "invalid_rect", "too_large", "unsupported", "denied", "weird" }
+  for _, code in ipairs(codes) do
+    e.m.video_result(code)
+    e.step(300)
+    local err = ui_validator.find(e.m.ui.trees.screen, "map-error")
+    t.ok(err and err.text ~= "" and not err.text:find("map_err", 1, true), "message for " .. code)
+    t.ok(ui_validator.find(e.m.ui.trees.screen, "map-take"), "button stays")
+    t.eq(ui_validator.find(e.m.ui.trees.screen, "map"), nil)
+    e.act("map_capture")
+  end
+  e.m.video_result("no_frame"); e.step(300)
+  t.eq(ui_validator.find(e.m.ui.trees.screen, "map-error").text, "No game picture yet. Make sure the game runs and is not paused.")
+  -- a broken PNG is an error, not a map
+  e.act("map_capture"); e.m.video_result(true, "junk", 1, 1); e.step(300)
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "map-error"))
+  t.eq(e.m.cache_files["map/000400000011C400.png"], nil)
+  -- no screens (no game picture): no request
+  local e2 = boot(nil, { video = { screens = false } })
+  e2.step(); e2.act("tab", 2); e2.act("map_capture")
+  t.eq(#e2.m.video.requests, 0)
+  t.ok(ui_validator.find(e2.m.ui.trees.screen, "map-error"))
+  -- capture raising a Lua error is caught
+  local e3 = boot(nil, { video = { raise = true } })
+  e3.step(); e3.act("tab", 2); e3.act("map_capture")
+  t.ok(ui_validator.find(e3.m.ui.trees.screen, "map-error"))
+end)
+
+t.case("map: an older Player without fb.video says so and nothing else breaks", function()
+  local e = boot(nil, { no_video = true })
+  e.step(); e.step()
   local p = e.m.ui.trees.screen
-  t.eq(ui_validator.find(p, "map"), nil, "never auto-shown")
-  t.eq(e.m.cache_files["map/choice.txt"], nil)
-  t.ok(ui_validator.find(p, "mc-t1").text:find("suggested by the game", 1, true))
-  t.ok(not ui_validator.find(p, "mc-t2").text:find("suggested", 1, true))
+  t.ok(ui_validator.find(p, "tabs").tabs[1]:find("^Routes"))
+  t.eq(ui_validator.find(p, "tabs").tabs[2], "Map")
   e.act("tab", 2)
-  e.act("map_use", "x")
-  e.act("tab", 1)
-  t.eq(ui_validator.find(e.m.ui.trees.screen, "map").image_w, 100)
-  local e2 = boot({ map_candidates = function() return nil, "unsupported" end, map_selected = function() return nil end })
-  e2.step(); e2.step(3100)
-    t.ok(ui_validator.find(e2.m.ui.trees.screen, "tabs").tabs[1]:find("^Routes"))
-  local e3 = boot() -- core 0.1: functions missing
-  e3.step(); e3.step(3100)
-    t.ok(ui_validator.find(e3.m.ui.trees.screen, "tabs").tabs[1]:find("^Routes"))
+  p = e.m.ui.trees.screen
+  t.ok(ui_validator.find(p, "map-empty").text:find("Update the Player", 1, true))
+  t.eq(ui_validator.find(p, "map-take"), nil)
+  e.act("map_capture") -- ignored
+  e.act("tab", 3)
+  t.ok(ui_validator.find(e.m.ui.trees.screen, "page-team"))
 end)
 
 t.case("map icons and route markers", function()
-  oras.COORDS["m1"] = { ["route-101"] = { x = 10, y = 20 } }
+  oras.COORDS["000400000011C400"] = { ["route-101"] = { x = 10, y = 20 } }
   local ok, err = pcall(function()
     local e = boot({
-      map_selected = function() return "m1" end, map_image = function() return png(100, 80) end,
-      map_candidates = function() return { { id = "m1", w = 100, h = 80 } } end,
       icon = function() return png(8, 8) end,
     })
     e.act("place_select", "route-101")
     e.step(3100)
     e.world.box[1] = B.rec({ p = 0x77, sp = 12, nick = "Zippy", hp = 30 })
     for _ = 1, 4 do e.step(6000) end
-    e.act("map_use", "m1")
+    e.act("tab", 2); e.act("map_capture"); e.m.video_result(true, png(100, 80), 100, 80); e.step(300); e.act("tab", 1)
     local map = ui_validator.find(e.m.ui.trees.screen, "map")
     t.eq(map.routes[1].id, "route-101")
     t.eq(map.routes[1].icons[1].src, "cache:icons/12-0.png")
     t.eq(map.players[1].x, 10)
   end)
-  oras.COORDS["m1"] = nil
+  oras.COORDS["000400000011C400"] = nil
   if not ok then error(err, 0) end
 end)

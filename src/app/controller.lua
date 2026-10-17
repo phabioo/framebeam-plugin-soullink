@@ -219,7 +219,7 @@ function A:start()
   -- run view: no game, so no core calls, no tracking, no notices; only the `run` slot shows the run
   if self.viewing then self.sync:push("screen", screen.empty(tr)) end
   self.icons = icons_mod.new(fb)
-  self.maps = maps_mod.new(fb)
+  self.maps = maps_mod.new(fb, not self.viewing)
   self.st = state.ensure(util.copy(fb.run.state()))
   self.last_enc = (not self.viewing and fb.run.state()) and util.encode(self.st) or nil
   self:load_events()
@@ -230,6 +230,9 @@ function A:start()
   fb.run.on("status", function() self.dirty = true end)
   if not self.viewing then
     fb.events.on("fb", "tiles", function(list) self.tiles = type(list) == "table" and list or {}; self.dirty = true end)
+    if self.maps.api then
+      fb.events.on("fb", "video.captured", function(e) if self.maps:on_captured(e) then self.dirty = true end end)
+    end
   end
   fb.on_tick(function() self:tick() end)
   self:poll(true)
@@ -268,7 +271,6 @@ function A:tick()
     local ok, err = pcall(self.poll, self, full)
     if not ok then warn_once(self, "poll", "poll failed: " .. tostring(err)) end
   end
-  if not self.viewing and self.maps and self.maps:step(now) then self.dirty = true end
   if not self.viewing and self.icons and self.icons:pump(now) then self.dirty = true end
   if self.hud_until and now >= self.hud_until then
     self.hud_until, self.hud_text = nil, nil
@@ -627,10 +629,10 @@ end
 function A:map_action(action, value)
   local m, c = self.maps, self.ui.calib
   if not m then return end
-  if action == "map_use" then
-    if type(value) == "string" then m:adopt(value) end
-  elseif action == "map_reset" then
-    m:reset()
+  if action == "map_capture" then
+    m:capture()
+  elseif action == "map_remove" then
+    m:remove()
     self.ui.calib = nil
   elseif action == "calib_toggle" then
     self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil

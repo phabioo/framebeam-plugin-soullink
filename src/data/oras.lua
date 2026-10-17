@@ -16,9 +16,8 @@ M.LAST_ROUTE = 134
 --- (`zones`) and merged across all players (model.view.merge_zones).
 M.ZONES = {}
 M.ZONE_TO_ROUTE = M.ZONES -- old name
-
---- Route positions on the region map image, keyed by the map id that pokemon-core reports
---- (`map_candidates()` / `map_selected()`): COORDS[map id][route key] = { x, y, area? } in image
+--- Route positions on the region map image, keyed by the game id (`fb.game.code`):
+--- COORDS[game id][route key] = { x, y, area? } in image
 --- pixels. Our own recorded facts, EMPTY for now: positions are recorded in the Map tab
 --- ("Place routes") and exported with "Export positions".
 M.COORDS = {}

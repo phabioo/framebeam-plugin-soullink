@@ -16,7 +16,7 @@ local oras = require("data.oras")
 local function boot(o)
   o = o or {}
   local run = B.run({ "Lena", "Jonas" })
-  local m = mock.new({ run = { current = run, states = o.states }, game = { code = "000400000011C400", language = "en" } })
+  local m = mock.new({ run = { current = run, states = o.states }, game = { code = "000400000011C400", language = "en" }, video = true })
   local core = fake_core.new(o.world)
   if o.setup then o.setup(core) end
   m.set_provider("pokemon.core", core.provider)
@@ -350,7 +350,7 @@ t.case("screen: the first tab is selected by default and the selection follows t
   local tabs = ui_validator.find(e.m.ui.trees.screen, "tabs")
   t.eq(tabs.selected, 1)
   t.eq(tabs.tabs[tabs.selected]:sub(1, 6), "Routes")
-  e.act("tab", 2, "screen") -- Team & box (no map tab yet)
+  e.act("tab", 3, "screen") -- Team & box (the Map tab follows Routes)
   tabs = ui_validator.find(e.m.ui.trees.screen, "tabs")
   t.eq(tabs.tabs[tabs.selected], "Team & box")
   -- opening the run screen again starts on the first tab
@@ -364,20 +364,18 @@ t.case("screen: the Map tab moving to the front keeps the player on the Map tab"
   local SIG = "\137PNG\r\n\26\n"
   local function png(w, h) return SIG .. string.pack(">I4", 13) .. "IHDR" .. string.pack(">I4I4", w, h) .. string.rep("\0", 8) end
   local e = boot()
-  local prov = e.m.providers["pokemon.core"]
-  prov.map_selected = function() return "a" end
-  prov.map_candidates = function() return { { id = "a", w = 100, h = 60 } } end
-  prov.map_image = function() return png(100, 60) end
-  for _ = 1, 3 do e.step(3100) end
+  e.step(3100)
   local tabs = ui_validator.find(e.m.ui.trees.screen, "tabs")
   t.eq(tabs.selected, 1)
-  t.eq(tabs.tabs[1]:sub(1, 6), "Routes", "Routes first while the map is being set up")
+  t.eq(tabs.tabs[1]:sub(1, 6), "Routes", "Routes first while there is no map")
   e.act("tab", 2, "screen")
   tabs = ui_validator.find(e.m.ui.trees.screen, "tabs")
   t.eq(tabs.tabs[tabs.selected], "Map")
-  e.act("map_use", "a", "screen")
+  e.act("map_capture", nil, "screen")
+  e.m.video_result(true, png(100, 60), 100, 60)
+  e.step(300)
   tabs = ui_validator.find(e.m.ui.trees.screen, "tabs")
-  t.eq(tabs.tabs[1], "Map", "the confirmed map leads")
+  t.eq(tabs.tabs[1], "Map", "the taken map leads")
   t.eq(tabs.tabs[tabs.selected], "Map", "selection stays on the Map tab")
   t.ok(ui_validator.find(e.m.ui.trees.screen, "map"))
   e.act("tab", 2, "screen")

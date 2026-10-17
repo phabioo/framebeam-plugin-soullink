@@ -70,7 +70,7 @@ function M.new(opts)
   local mock = { logs = {}, events = {}, provided = {}, watches = {}, dev_watches = {}, cache_files = {} }
   local regions = opts.memory or {}
   mock.regions = regions
-  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.4.1" } }
+  local fb = { api = 1, plugin = { id = "net.framebeam.soullink", version = "0.5.0" } }
   fb.game = opts.game or {}
   if opts.language and not fb.game.language then fb.game.language = opts.language end
   mock.fb = fb
@@ -373,6 +373,33 @@ function M.new(opts)
   end
   --- mock.action(action, value, slot) calls the registered fb.ui.on_action handler.
   function mock.action(action, value, slot) return ui.handler(action, deep_copy(value), slot) end
+
+  -- opts.video: fake fb.video (permission video.capture). { screens = list | false (nil), raise = true }
+  -- mock.video.requests lists the capture targets; mock.video_result(ok_or_error, png, w, h) answers the
+  -- pending request with a `video.captured` host event (ok_or_error = true or an error code).
+  if opts.video then
+    local v = type(opts.video) == "table" and opts.video or {}
+    local screens = v.screens
+    if screens == nil then screens = { { name = "top", x = 0, y = 0, w = 400, h = 240 }, { name = "bottom", x = 40, y = 240, w = 320, h = 240 } } end
+    mock.video = { requests = {}, next_id = 1 }
+    fb.video = {
+      screens = function() return screens or nil end,
+      capture = function(target)
+        if type(target) ~= "string" and type(target) ~= "table" then error("bad capture target", 2) end
+        if v.raise then error("capture failed", 2) end
+        local id = mock.video.next_id
+        mock.video.next_id = id + 1
+        mock.video.requests[#mock.video.requests + 1] = { id = id, target = target }
+        return id
+      end,
+    }
+    function mock.video_result(res, png, w, h)
+      local req = mock.video.requests[#mock.video.requests]
+      local ev = { id = req.id, ok = res == true }
+      if res == true then ev.png, ev.w, ev.h = png, w, h else ev.error = res end
+      mock.fire_event("fb", "video.captured", ev)
+    end
+  end
 
   fb.cache = {
     write = function(name, data) mock.cache_files[name] = data; return true end,
