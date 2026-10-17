@@ -76,7 +76,7 @@ end
 
 local function picker_blocks(ctx, me)
   local tr = ctx.tr
-  local selected = me.place.key
+  local selected = common.place_value(me.place)
   return {
     { type = "select", id = "place-select", options = common.route_options(ctx, nil, selected), selected = selected,
       action = "place_select" },

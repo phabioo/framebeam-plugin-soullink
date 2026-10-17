@@ -21,6 +21,12 @@ function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and MAP_STATES[ctx.
 local RULE_ORDER = { "first_encounter_only", "dupes_clause", "shiny_clause", "hordes_count",
   "pairs_differ_primary_type", "only_linked_in_team", "nickname_required", "level_caps" }
 
+local function rules_on(view)
+  local n = 0
+  for _, k in ipairs(RULE_ORDER) do if view.rules[k] then n = n + 1 end end
+  return n
+end
+
 local function rules_list(ctx)
   local tr, view = ctx.tr, ctx.view
   local rows = { { id = "ru-mode", title = tr("rs_mode"), sub = common.mode_text(view, tr) } }
@@ -53,11 +59,15 @@ local function header(ctx)
       { type = "stat", id = "st-routes", label = tr("stat_routes"), value = s.routes_done .. " / " .. s.routes_total },
       { type = "stat", id = "st-badges", label = tr("stat_badges"), value = tostring(s.badges_max) },
     } },
-    { type = "row", id = "head-rules", gap = 8, children = {
-      { type = "chip", id = "rules-chip", text = tr("rules_title"), action = "rules_toggle", selected = rules_open },
+    -- rules: collapsed to one summary line; the list opens in a short scroll area so it never pushes the page down
+    { type = "row", id = "head-rules", gap = 8, align = "center", children = {
+      { type = "text", id = "rules-summary", style = "meta",
+        text = tr("rules_summary", { n = rules_on(view), total = #RULE_ORDER }) },
+      { type = "chip", id = "rules-chip", text = tr(rules_open and "rules_hide" or "rules_show"),
+        action = "rules_toggle", selected = rules_open },
     } },
   }
-  if rules_open then kids[#kids + 1] = rules_list(ctx) end
+  if rules_open then kids[#kids + 1] = { type = "scroll", id = "rules-scroll", max_height = "s", children = { rules_list(ctx) } } end
   return { type = "column", id = "head", gap = 8, children = kids }
 end
 
@@ -203,6 +213,10 @@ local function graveyard_page(ctx)
 end
 
 local function event_text(ctx, ev)
+  -- automatic events are worded again from their ids, so names that were not known when the event
+  -- was posted ("#265") show once the game text is available
+  local live = ctx.event_text and ctx.event_text(ev)
+  if live then return live end
   if type(ev.text) == "string" and ev.text ~= "" then return ev.text end
   return ctx.tr("log_type_" .. tostring(ev.type):gsub("[^%w]", "_"))
 end
@@ -239,8 +253,10 @@ local STEPS = { 2, 10, 40 }
 local function calibration(ctx, m)
   local tr, c = ctx.tr, ctx.ui.calib
   local opts = {}
+  local is_area = {}
+  for _, id in ipairs(ctx.view.areas or {}) do is_area[oras.area_key(id)] = true end
   for _, o in ipairs(common.route_options(ctx, nil, c.route)) do
-    if oras.is_route(o.value) then opts[#opts + 1] = o end
+    if oras.is_route(o.value) and (is_area[o.value] or not oras.area_id(o.value)) then opts[#opts + 1] = o end
   end
   local steps = {}
   for _, n in ipairs(STEPS) do steps[#steps + 1] = { value = n, label = tr("calib_px", { n = n }) } end
@@ -366,7 +382,10 @@ function M.build(ctx)
     local builders = { map = map_page, routes = routes_page, team = team_page, grave = graveyard_page, log = log_page }
     pages[i] = builders[id](ctx)
   end
-  local sel = math.min(math.max(ctx.ui.screen_tab or 1, 1), #ids)
+  -- the selection is kept by tab id: the list changes (the Map tab comes and goes), an index would then
+  -- point at another tab; the first tab is selected until the player picks one
+  local sel = 1
+  for i, id in ipairs(ids) do if id == ctx.ui.screen_tab_id then sel = i end end
   local kids = {}
   kids[#kids + 1] = header(ctx)
   local corr = corr_ui.section(ctx)

@@ -258,6 +258,22 @@ function V.merge_areas(run, states)
   return out
 end
 
+--- Every place of the game in game order (location ids): the own list, then ids only others know;
+--- states from before v0.4.1 only know the encounter areas.
+function V.merge_places(run, states)
+  local out, seen = {}, {}
+  for _, id in ipairs(ids_me_first(run, states)) do
+    local st = states and states[id]
+    local a = type(st) == "table" and (type(st.places) == "table" and st.places or st.areas) or nil
+    if type(a) == "table" then
+      for _, lid in ipairs(a) do
+        if math.type(lid) == "integer" and not seen[lid] then seen[lid] = true; out[#out + 1] = lid end
+      end
+    end
+  end
+  return out
+end
+
 function V.view(run, states, events, cfg)
   run, states = run or {}, states or {}
   cfg = cfg and rules.normalize(cfg) or rules.parse(run)
@@ -278,8 +294,9 @@ function V.view(run, states, events, cfg)
 
   local names = V.merge_names(run, states)
   local areas = V.merge_areas(run, states)
+  local places = V.merge_places(run, states)
   local order = {}
-  for i, lid in ipairs(areas) do order[oras.area_key(lid)] = i end
+  for i, lid in ipairs(places) do order[oras.area_key(lid)] = i end
   local function sname(species) return names.sp[tostring(species)] end
 
   local catch_seq, death_seq, effective, invalid = collect_events(events)
@@ -473,8 +490,10 @@ function V.view(run, states, events, cfg)
   end
   -- starter + every area of the game + free places and legacy routes that have activity
   stats.routes_total = 1 + #areas
+  local area_set = {}
+  for _, lid in ipairs(areas) do area_set[oras.area_key(lid)] = true end
   for _, r in ipairs(route_keys) do
-    if r:sub(1, 6) == "place:" or oras.route_number(r) or (oras.area_id(r) and not order[r]) then
+    if r:sub(1, 6) == "place:" or oras.route_number(r) or (oras.area_id(r) and not area_set[r]) then
       stats.routes_total = stats.routes_total + 1
     end
   end
@@ -562,7 +581,7 @@ function V.view(run, states, events, cfg)
   end
 
   return {
-    names = names, areas = areas, order = order,
+    names = names, areas = areas, places = places, order = order,
     mode = cfg.mode, rules = cfg.rules, players = out_players, rows = rows, groups = group_views,
     graveyard = graveyard, stats = stats, hints = hints, invalid_corrections = invalid,
     zones = V.merge_zones(run, states),

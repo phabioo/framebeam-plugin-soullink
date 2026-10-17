@@ -39,7 +39,7 @@ function A.new(fb)
   local self = setmetatable({}, A)
   self.fb = fb
   self.tr = function(key, vars) return fb.i18n.t(key, vars) end
-  self.ui = { screen_tab = 1 }
+  self.ui = {}
   self.events, self.seen = {}, {}
   self.queue = {}          -- death events waiting for the view
   self.tiles, self.tile_slots = {}, {}
@@ -83,33 +83,83 @@ function A:game_name(kind, id)
   if not ok or why == "unsupported" then self.name_unsupported = true; return nil end
   if type(v) == "string" and v ~= "" then
     self.gnames[kind][id] = v
+    -- remembered in the run state: other players and the Hub show the name without a running game
+    if self.st then state.note_name(self.st, kind == "species" and "sp" or "loc", id, v) end
     return v
   end
   return nil
 end
 
---- Encounter areas of the game (`areas()`), loaded once: { set, order, names }. nil while not ready.
-function A:refresh_areas()
-  if self.areas_info or self.areas_unsupported or self.viewing then return end
-  local now = self.fb.clock()
-  if self.areas_next and now < self.areas_next then return end
-  local ok, list, why = pcall(self.fb.call, A.CORE, "areas")
-  if not ok or why == "unsupported" then self.areas_unsupported = true; return end
-  if type(list) ~= "table" then
-    self.areas_next = now + 2000
-    return
-  end
-  local info = { set = {}, order = {}, names = {} }
-  for _, a in ipairs(list) do
+--- Areas info from the encounter areas (`areas()` list) and the places (`locations()` list), either may be nil:
+--- { set = encounter areas, order = encounter areas in game order, names = { [id] = name },
+---   places = every place in game order }. Deduplicated by location id; a place without encounter slots
+--- (town ...) is a place option but no route key.
+local function build_info(areas, locs)
+  local info = { set = {}, order = {}, names = {}, places = {} }
+  local area_ids = {}
+  for _, a in ipairs(areas or {}) do
     local id = type(a) == "table" and int(a.id) or nil
     if id and not info.set[id] then
       info.set[id] = true
-      info.order[#info.order + 1] = id
+      area_ids[#area_ids + 1] = id
       if type(a.name) == "string" and a.name ~= "" then info.names[id] = a.name end
     end
   end
-  self.areas_info = info
-  self.dirty = true
+  local seen = {}
+  for _, l in ipairs(locs or {}) do
+    local id = type(l) == "table" and int(l.id) or nil
+    if id and not seen[id] then
+      seen[id] = true
+      info.places[#info.places + 1] = id
+      if info.names[id] == nil and type(l.name) == "string" and l.name ~= "" then info.names[id] = l.name end
+      if l.has_encounters == true and not info.set[id] then
+        info.set[id] = true
+        area_ids[#area_ids + 1] = id
+      end
+    end
+  end
+  for _, id in ipairs(area_ids) do
+    if not seen[id] then seen[id] = true; info.places[#info.places + 1] = id end
+  end
+  if locs then
+    for _, id in ipairs(info.places) do if info.set[id] then info.order[#info.order + 1] = id end end
+  else
+    info.order = area_ids
+  end
+  return info
+end
+
+--- Encounter areas (`areas()`) and places (`locations()`, optional, pokemon-core >= 0.3.1), loaded once:
+--- self.areas_info = { set, order, names, places }. nil while not ready. A core without locations() works
+--- with the areas alone; while locations() answers "not_ready" it is asked again every 5 s.
+function A:refresh_areas()
+  if self.viewing then return end
+  local now = self.fb.clock()
+  if self.areas_next and now < self.areas_next then return end
+  if not self.area_list and not self.areas_unsupported then
+    local ok, list, why = pcall(self.fb.call, A.CORE, "areas")
+    if not ok or why == "unsupported" then self.areas_unsupported = true
+    elseif type(list) ~= "table" then self.areas_next = now + 2000; return
+    else self.area_list = list end
+  end
+  local changed = false
+  if not self.loc_list and not self.locations_unsupported then
+    if self.locations_next and now < self.locations_next then
+      -- asked again later
+    else
+      local ok, list, why = pcall(self.fb.call, A.CORE, "locations")
+      if not ok or why == "unsupported" then self.locations_unsupported = true
+      elseif type(list) ~= "table" then self.locations_next = now + 5000
+      else self.loc_list = list; changed = true end
+    end
+  end
+  if (self.area_list and not self.areas_info) or changed then
+    self.areas_info = build_info(self.area_list, self.loc_list)
+    self.dirty = true
+  elseif not self.areas_info and self.loc_list then
+    self.areas_info = build_info(nil, self.loc_list)
+    self.dirty = true
+  end
 end
 
 --- Primary type of a species (`species_info`), cached; nil when unknown.
@@ -246,7 +296,7 @@ function A:poll(full)
   if snap.badges ~= nil then self.badges_seen = true end
   self.name_budget = A.NAME_BUDGET
   self:refresh_areas()
-  local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language },
+  local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), game = { id = game.code, language = game.language },
     zones = view_mod.merge_zones(self.run, self:states()),
     areas = self.areas_info, areas_unsupported = self.areas_unsupported,
     names = { species = function(id) return self:game_name("species", id) end },
@@ -288,9 +338,9 @@ function A:place_text(route)
   return route and common.route_label(self:label_ctx(), route) or self.tr("place_none")
 end
 
-function A:fact_text(f)
+function A:fact_text(f, user)
   local tr = self.tr
-  local player = self:player_name(self.me)
+  local player = self:player_name(user or self.me)
   local sname = f.species and self:species_text(f.species, f.species_name) or nil
   local mon = common.mon_name({ nickname = f.nickname, species = f.species, species_name = sname })
   local text
@@ -311,6 +361,25 @@ function A:fact_text(f)
   end
   if text and f.why then text = text .. " " .. tr("ev_why_" .. f.why) end
   return text and util.clean_text(text, 280) or nil
+end
+
+--- Text of an automatic event worded again from its payload (ids), with the names known now.
+function A:event_text(ev)
+  if ev.source ~= "automatic" or type(ev.payload) ~= "table" then return nil end
+  local p, ty = ev.payload, ev.type
+  local f
+  if ty == events.TYPES.catch then
+    f = { kind = "catch", route = p.route, species = p.species, species_name = p.species_name,
+          nickname = p.nickname, why = p.why }
+  elseif ty == events.TYPES.death then
+    f = { kind = "death", species = p.species, species_name = p.species_name, nickname = p.nickname }
+  elseif ty == events.TYPES.encounter then
+    f = { kind = p.outcome == "missed" and "missed" or "encounter", route = p.route, species = p.species,
+          species_name = p.species_name, why = p.outcome ~= "missed" and p.why or nil }
+  elseif ty == events.TYPES.place then
+    f = { kind = "place", key = p.route, name = p.name }
+  end
+  return f and self:fact_text(f, ev.user_id) or nil
 end
 
 function A:post_fact(f)
@@ -415,6 +484,7 @@ function A:ctx(view)
            can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
            badges_manual = not self.badges_seen,
            area_name = function(id) return self:area_name(id) end,
+           event_text = function(ev) return self:event_text(ev) end,
            icon = self.icons and function(species, form) return self.icons:src(species, form) end or nil }
 end
 
@@ -608,14 +678,17 @@ function A:on_action(action, value, slot)
   local writable = self:writable()
 
   if action == "open_run" then
+    self.ui.screen_tab_id = nil -- the screen opens on its first tab
+    self.dirty = true
     self:open_screen()
   elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
   elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
   elseif action == "tab" then
-    if math.type(value) == "integer" then
-      self.ui.screen_tab = value
+    if math.type(value) == "integer" and self.view then
+      local ids = screen.tab_ids(self:ctx(self.view))
+      self.ui.screen_tab_id = ids[value]
       self.dirty = true
     end
   elseif action:sub(1, 3) == "rf:" then self.ui.routes_filter = action:sub(4); self.dirty = true
