@@ -2,13 +2,62 @@
 --   ctx = { view, run, me, ui, tr, readonly, now, events }
 -- and return fb.ui block trees. Only tones, sizes and player numbers are used, never colors.
 local oras = require("data.oras")
+local util = require("model.util")
 
 local C = {}
 
---- Display name of a mon: its nickname, else "#<species id>" until the core provides names.
+--- Species name read from the game (stored in the run state), else "#<species id>".
+function C.species_label(m)
+  if m and type(m.species_name) == "string" and m.species_name ~= "" then return m.species_name end
+  return "#" .. tostring(m and m.species or "?")
+end
+
+--- Display name of a mon: its nickname, else the species name.
 function C.mon_name(m)
   if m and type(m.nickname) == "string" and m.nickname ~= "" then return m.nickname end
-  return "#" .. tostring(m and m.species or "?")
+  return C.species_label(m)
+end
+
+--- Label of a route / area key: live name from the game (ctx.area_name), else the stored name,
+--- else "Area <id>" / "Route <n>" / the typed text.
+function C.route_label(ctx, key)
+  local id = oras.area_id(key)
+  if id and ctx.area_name then
+    local nm = ctx.area_name(id)
+    if nm then return nm end
+  end
+  return oras.label(key, ctx.tr, ctx.view and ctx.view.names)
+end
+
+--- Text cut to `n` characters (HUD and tile strip have small size limits).
+function C.short(text, n)
+  return util.clean_text(text, n) or ""
+end
+
+--- Options for a route select (at most 100): optional "no group" entry, the starter, the game's
+--- areas in game order, then keys with activity that are not areas (free places, legacy routes) and
+--- the selected key. Areas at the end are dropped first when the list is too long.
+function C.route_options(ctx, none_label, selected)
+  local view = ctx.view
+  local head, tail, seen = {}, {}, {}
+  if none_label then head[#head + 1] = { value = "none", label = none_label }; seen.none = true end
+  local function add(list, key)
+    if key and not seen[key] then
+      seen[key] = true
+      list[#list + 1] = { value = key, label = C.route_label(ctx, key) }
+    end
+  end
+  add(head, oras.STARTER)
+  local areas = {}
+  for _, id in ipairs(view.areas or {}) do add(areas, oras.area_key(id)) end
+  for _, r in ipairs(view.rows) do add(tail, r.route) end
+  add(tail, selected)
+  local room = 100 - #head - #tail
+  local out = {}
+  for _, o in ipairs(head) do out[#out + 1] = o end
+  for i = 1, math.min(#areas, math.max(room, 0)) do out[#out + 1] = areas[i] end
+  for _, o in ipairs(tail) do if #out < 100 then out[#out + 1] = o end end
+  return out
 end
 
 --- `cache:` src of the creature icon (pokemon-core icon, fetched lazily by the controller), or nil.
@@ -65,9 +114,10 @@ function C.row_of(view, route)
 end
 
 --- Place text: name read from the game if the core reported it, else the route label.
-function C.place_label(place, tr)
+--- `view` (optional) supplies the stored area names.
+function C.place_label(place, tr, view)
   if place.name and place.name ~= "" then return place.name end
-  if place.key then return oras.label(place.key, tr) end
+  if place.key then return oras.label(place.key, tr, view and view.names) end
   return tr("place_none")
 end
 
@@ -81,9 +131,9 @@ function C.status_tone(status) return TONE[status] or "neutral" end
 --- Short text of a cell of the routes matrix.
 function C.cell_text(cell, tr)
   if cell.state == "open" then return tr("cell_open") end
-  if cell.state == "encounter" then return tr("cell_encounter", { mon = "#" .. tostring(cell.species or "?") }) end
+  if cell.state == "encounter" then return tr("cell_encounter", { mon = C.species_label(cell) }) end
   if cell.state == "missed" then return tr("cell_missed") end
-  local name = (cell.nickname and cell.nickname ~= "") and cell.nickname or ("#" .. tostring(cell.species or "?"))
+  local name = C.mon_name(cell)
   if cell.state == "dead" then return "✕ " .. name end
   return name
 end

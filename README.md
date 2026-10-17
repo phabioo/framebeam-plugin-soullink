@@ -2,7 +2,7 @@
 
 SoulLink/Nuzlocke runs for FrameBeam: rules, detection, team and route views, Hub run board.
 
-Status: **v0.1 in development** for Omega Ruby / Alpha Sapphire: run rules, catch detection through `framebeam-plugin-pokemon-core`, link groups, manual corrections, in-game panel, HUD, tile strip, run view and Hub board. Place and deaths are entered by hand until pokemon-core reports them. Details: [docs/architecture.md](docs/architecture.md).
+Status: **v0.4.0** for Omega Ruby / Alpha Sapphire: run rules, detection through `framebeam-plugin-pokemon-core` 0.3 (places and routes from the game, encounters, catches, deaths, badges), link groups, manual corrections, a compact in-game panel, the run screen (opened from the game), HUD, tile strip, run view and Hub board. Details: [docs/architecture.md](docs/architecture.md).
 
 Requires FrameBeam 0.11 or later (plugin API v1) and `framebeam-plugin-pokemon-core`, which the Start dialog adds to the run automatically (manifest `requires`). Part of [FrameBeam](https://github.com/phabioo/framebeam); plugin interface: `docs/architecture/12-plugins.md` there. Plan: [docs/roadmap.md](docs/roadmap.md). UI design (screens 5a to 5i): [docs/design/](docs/design/README.md).
 

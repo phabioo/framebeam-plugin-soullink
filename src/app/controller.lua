@@ -32,6 +32,8 @@ A.HUD_MS = 3000      -- HUD stays expanded after a linked death
 A.NOTICE_TRIES = 40  -- renders to wait for the state that shows a death
 A.MAX_ZONES = 120    -- learned zone mappings kept in the own state
 A.CAL_STEPS = { [2] = true, [10] = true, [40] = true }
+A.NAME_BUDGET = 16   -- core name() lookups per poll
+A.CORE = "pokemon.core"
 
 function A.new(fb)
   local self = setmetatable({}, A)
@@ -46,6 +48,9 @@ function A.new(fb)
   self.dirty = true
   self.errors = {}
   self.unsupported = {} -- parts of pokemon.core that answered "unsupported"
+  self.gnames = { species = {}, location = {} } -- names read from the game (core name())
+  self.types = {}          -- "species:form" -> primary type id
+  self.name_budget = A.NAME_BUDGET
   return self
 end
 
@@ -54,6 +59,97 @@ local function warn_once(self, key, ...)
     self.errors[key] = true
     self.fb.log.warn(...)
   end
+end
+
+-- ---------------------------------------------------------------- names and areas from the core
+
+local function int(v)
+  if math.type(v) == "float" then v = math.tointeger(v) end
+  if math.type(v) == "integer" then return v end
+  return nil
+end
+
+--- Display name read from the game (`name(kind, id)`), cached; a few lookups per poll.
+--- kind = "species" | "location". nil while the game text is not ready or unsupported.
+function A:game_name(kind, id)
+  id = int(id)
+  if id == nil then return nil end
+  local cached = self.gnames[kind][id]
+  if cached then return cached end
+  if kind == "location" and self.areas_info and self.areas_info.names[id] then return self.areas_info.names[id] end
+  if self.name_unsupported or self.name_budget <= 0 or self.viewing then return nil end
+  self.name_budget = self.name_budget - 1
+  local ok, v, why = pcall(self.fb.call, A.CORE, "name", kind, id)
+  if not ok or why == "unsupported" then self.name_unsupported = true; return nil end
+  if type(v) == "string" and v ~= "" then
+    self.gnames[kind][id] = v
+    return v
+  end
+  return nil
+end
+
+--- Encounter areas of the game (`areas()`), loaded once: { set, order, names }. nil while not ready.
+function A:refresh_areas()
+  if self.areas_info or self.areas_unsupported or self.viewing then return end
+  local now = self.fb.clock()
+  if self.areas_next and now < self.areas_next then return end
+  local ok, list, why = pcall(self.fb.call, A.CORE, "areas")
+  if not ok or why == "unsupported" then self.areas_unsupported = true; return end
+  if type(list) ~= "table" then
+    self.areas_next = now + 2000
+    return
+  end
+  local info = { set = {}, order = {}, names = {} }
+  for _, a in ipairs(list) do
+    local id = type(a) == "table" and int(a.id) or nil
+    if id and not info.set[id] then
+      info.set[id] = true
+      info.order[#info.order + 1] = id
+      if type(a.name) == "string" and a.name ~= "" then info.names[id] = a.name end
+    end
+  end
+  self.areas_info = info
+  self.dirty = true
+end
+
+--- Primary type of a species (`species_info`), cached; nil when unknown.
+function A:primary_type(species, form)
+  species = int(species)
+  if species == nil or self.types_unsupported then return nil end
+  local key = species .. ":" .. tostring(int(form) or 0)
+  if self.types[key] ~= nil then return self.types[key] or nil end
+  local ok, v, why = pcall(self.fb.call, A.CORE, "species_info", species, int(form) or 0)
+  if not ok or why == "unsupported" then self.types_unsupported = true; return nil end
+  local t = type(v) == "table" and type(v.types) == "table" and int(v.types[1]) or nil
+  if t ~= nil then self.types[key] = t end
+  return t
+end
+
+--- Primary types of the partners' counted creatures on a route.
+function A:partner_types(route)
+  local out = {}
+  for uid, st in pairs(self:states()) do
+    local e = uid ~= self.me and type(st) == "table" and type(st.routes) == "table" and st.routes[route]
+    local m = e and e.status == "caught" and e.mon and type(st.mons) == "table" and st.mons[e.mon]
+    if m and m.ty ~= nil then out[m.ty] = true end
+  end
+  return out
+end
+
+--- Species name for texts: the record's own text, the game, or the names stored in the run.
+function A:species_text(id, hint)
+  if type(hint) == "string" and hint ~= "" then return hint end
+  local live = self:game_name("species", id)
+  if live then return live end
+  local nm = self.view and self.view.names and self.view.names.sp[tostring(id)]
+  if nm then return nm end
+  local own = self.st and self.st.names and self.st.names.sp[tostring(id)]
+  return own
+end
+
+function A:area_name(id)
+  id = int(id)
+  return id and ((self.areas_info and self.areas_info.names[id]) or self.gnames.location[id]) or nil
 end
 
 -- ---------------------------------------------------------------- start
@@ -144,11 +240,18 @@ function A:poll(full)
     unsupported = self.unsupported })
   if snap.boxes then self.boxes = snap.boxes end
   local game = self.fb.game or {}
-  local zone = type(snap.location) == "table" and snap.location.zone or nil
-  if math.type(zone) == "float" then zone = math.tointeger(zone) end
-  self.cur_zone = math.type(zone) == "integer" and zone or nil
+  local loc = type(snap.location) == "table" and snap.location or {}
+  self.cur_zone, self.cur_loc = int(loc.zone), int(loc.location)
+  if self.cur_zone ~= nil or self.cur_loc ~= nil then self.location_ok = true end
+  if snap.badges ~= nil then self.badges_seen = true end
+  self.name_budget = A.NAME_BUDGET
+  self:refresh_areas()
   local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language },
-    zones = view_mod.merge_zones(self.run, self:states()) })
+    zones = view_mod.merge_zones(self.run, self:states()),
+    areas = self.areas_info, areas_unsupported = self.areas_unsupported,
+    names = { species = function(id) return self:game_name("species", id) end },
+    types = function(species, form) return self:primary_type(species, form) end,
+    partner_types = function(route) return self:partner_types(route) end })
   self:commit(st, facts)
 end
 
@@ -175,14 +278,21 @@ function A:player_name(id)
   return tostring(id)
 end
 
+--- Context for labels outside a render (names from the view or the own state, live area names).
+function A:label_ctx()
+  local view = self.view or { names = (self.st and self.st.names) or { sp = {}, loc = {} } }
+  return { tr = self.tr, view = view, area_name = function(id) return self:area_name(id) end }
+end
+
 function A:place_text(route)
-  return route and oras.label(route, self.tr) or self.tr("place_none")
+  return route and common.route_label(self:label_ctx(), route) or self.tr("place_none")
 end
 
 function A:fact_text(f)
   local tr = self.tr
   local player = self:player_name(self.me)
-  local mon = common.mon_name({ nickname = f.nickname, species = f.species })
+  local sname = f.species and self:species_text(f.species, f.species_name) or nil
+  local mon = common.mon_name({ nickname = f.nickname, species = f.species, species_name = sname })
   local text
   if f.kind == "catch" then
     text = f.route and tr("ev_catch", { player = player, mon = mon, place = self:place_text(f.route) })
@@ -190,7 +300,7 @@ function A:fact_text(f)
   elseif f.kind == "death" then
     text = tr("ev_death", { player = player, mon = mon })
   elseif f.kind == "encounter" then
-    local m = "#" .. tostring(f.species or "?")
+    local m = common.species_label({ species = f.species, species_name = sname })
     text = f.route and tr("ev_encounter", { player = player, mon = m, place = self:place_text(f.route) })
       or tr("ev_encounter_noplace", { player = player, mon = m })
   elseif f.kind == "missed" then
@@ -228,7 +338,8 @@ function A:on_event(ev)
   if ev.type == events.TYPES.death then
     self.queue[#self.queue + 1] = { ev = ev, tries = 0 }
   elseif ev.type == events.TYPES.catch and ev.user_id ~= self.me and p.counts then
-    local who = { player = self:player_name(ev.user_id), mon = common.mon_name({ nickname = p.nickname, species = p.species }) }
+    local who = { player = self:player_name(ev.user_id), mon = common.mon_name({ nickname = p.nickname, species = p.species,
+      species_name = self:species_text(p.species, p.species_name) }) }
     if p.route then who.place = self:place_text(p.route) end
     self:notify({ tone = "info", text = self.tr(p.route and "note_catch" or "note_catch_noplace", who) })
   end
@@ -301,6 +412,9 @@ function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
            events = self.events, hud_death = self.hud_until and self.hud_text or nil,
            map = self.maps and self.maps:view() or nil,
+           can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
+           badges_manual = not self.badges_seen,
+           area_name = function(id) return self:area_name(id) end,
            icon = self.icons and function(species, form) return self.icons:src(species, form) end or nil }
 end
 
@@ -320,15 +434,7 @@ function A:render()
     self.sync:push("run", screen.build(ctx))
     return
   end
-  if self.ui.panel_run then
-    -- the panel itself shows the run view (the platform has no call that opens the screen slot)
-    local pctx = {}
-    for k, v in pairs(ctx) do pctx[k] = v end
-    pctx.compact, pctx.tab = true, self.ui.panel_tab or 1
-    self.sync:push("panel", screen.build(pctx))
-  else
-    self.sync:push("panel", panel.build(ctx))
-  end
+  self.sync:push("panel", panel.build(ctx))
   self.sync:push("hud", hud.build(ctx))
   self.sync:push("screen", screen.build(ctx))
 
@@ -337,7 +443,7 @@ function A:render()
   for id, p in pairs(matched) do
     local slot = "tile:" .. id
     live[slot] = true
-    self.sync:push(slot, tile.build(self.tr, p))
+    self.sync:push(slot, tile.build(self.tr, p, view))
   end
   for slot in pairs(self.tile_slots) do
     if not live[slot] then self.sync:clear(slot) end
@@ -369,7 +475,7 @@ function A:correction_text(spec)
   if p.kind == "add" then mon = common.mon_name({ nickname = p.nickname, species = p.species }) end
   return util.clean_text(tr("ev_c_" .. p.kind, {
     player = self:player_name(self.me), target = p.user and self:player_name(p.user) or "",
-    route = p.route and oras.label(p.route, tr) or (p.group and p.group ~= "none" and oras.label(p.group, tr)) or "",
+    route = p.route and self:place_text(p.route) or (p.group and p.group ~= "none" and self:place_text(p.group)) or "",
     mon = mon or "?", seq = p.target or "", reason = p.reason or "",
   }), 280)
 end
@@ -426,10 +532,14 @@ end
 
 function A:set_place(input)
   if not self:writable() then return end
-  local st, fact = detect.set_place(self.st, input, nil, self.cur_zone)
+  local st, fact = detect.set_place(self.st, input, nil, self.cur_zone, self.cur_loc)
   local key = st.place.key
-  -- the answer for a reported zone is remembered and shared through the own state
-  if key and key ~= oras.STARTER then self:learn_zone(st, self.cur_zone, key) end
+  local id = key and oras.area_id(key)
+  if id then state.note_name(st, "loc", id, self:game_name("location", id)) end
+  -- fallback without a location id: the answer for a reported zone is remembered and shared
+  if key and key ~= oras.STARTER and not (self.cur_loc and self.areas_info) then
+    self:learn_zone(st, self.cur_zone, key)
+  end
   self:commit(st, { fact })
 end
 
@@ -437,7 +547,7 @@ end
 
 function A:calib_route(route)
   local c = self.ui.calib
-  if not c or not oras.route_number(route) then return end
+  if not c or not oras.is_route(route) then return end
   local m = self.maps
   c.route, c.msg = route, nil
   local at = m:merged()[route]
@@ -454,6 +564,7 @@ function A:map_action(action, value)
     self.ui.calib = nil
   elseif action == "calib_toggle" then
     self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
+    m.order = self.view and self.view.order or nil
   elseif c and action == "calib_route" then
     self:calib_route(value)
   elseif c and action == "calib_step" then
@@ -468,6 +579,7 @@ function A:map_action(action, value)
   elseif c and action == "calib_set" and c.route and c.x then
     c.msg = m:set_coord(c.route, c.x, c.y) and "saved" or "failed"
   elseif c and action == "calib_export" then
+    m.order = self.view and self.view.order or nil
     c.msg = m:export_line() and "exported" or "none"
   end
   self.dirty = true
@@ -475,10 +587,19 @@ end
 
 -- ---------------------------------------------------------------- actions
 
+--- Open the run screen (screen slot) over the game: fb.ui.open("screen"), only when the platform has it.
+--- Without it the panel says so (ctx.can_open).
+function A:open_screen()
+  if self.viewing or type(self.fb.ui.open) ~= "function" then return false end
+  local ok, err = pcall(self.fb.ui.open, "screen")
+  if not ok then warn_once(self, "open", "ui.open failed: " .. tostring(err)) end
+  return ok
+end
+
 function A:on_action(action, value, slot)
   if slot == "hotkey" then
     if action == "toggle-hud" then return end -- the host shows or hides the widget
-    if action == "open-run" then action = "open_run_toggle"
+    if action == "open-run" then action = "open_run"
     elseif action == "doesnt-count" then action, value = "dc_open", nil
     else return end
   end
@@ -486,19 +607,15 @@ function A:on_action(action, value, slot)
   local me = my_player(self)
   local writable = self:writable()
 
-  if action == "open_run" or action == "open_run_toggle" then
-    -- the panel switches between the live view and the run view; the screen slot starts at its first tab
-    local open = action == "open_run" or not self.ui.panel_run
-    if open and not self.ui.panel_run then self.ui.panel_tab = 1 end
-    self.ui.panel_run = open
-    self.ui.screen_tab = 1
-    self.dirty = true
-  elseif action == "panel_back" then self.ui.panel_run = false; self.dirty = true
+  if action == "open_run" then
+    self:open_screen()
+  elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
+  elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
   elseif action == "tab" then
     if math.type(value) == "integer" then
-      if slot == "panel" then self.ui.panel_tab = value else self.ui.screen_tab = value end
+      self.ui.screen_tab = value
       self.dirty = true
     end
   elseif action:sub(1, 3) == "rf:" then self.ui.routes_filter = action:sub(4); self.dirty = true
@@ -508,7 +625,7 @@ function A:on_action(action, value, slot)
     if type(value) == "table" then
       if value.kind == "route" then
         self.ui.selected_route = value.id
-        if self.ui.calib and oras.route_number(value.id) then self:calib_route(value.id) end
+        if self.ui.calib and oras.is_route(value.id) then self:calib_route(value.id) end
       elseif value.kind == "filter" then self.ui.map_filter = value.value end
       self.dirty = true
     end
@@ -561,7 +678,7 @@ function A:on_action(action, value, slot)
   elseif action == "dead_open" then
     if me and me.mons[value] then self:open_corr({ kind = "mark_dead", mon = value }) end
   elseif action == "add_open" then
-    self:open_corr({ kind = "add", route = me and me.place.key and oras.is_key(me.place.key) and me.place.key or oras.ROUTE_KEYS[1],
+    self:open_corr({ kind = "add", route = me and me.place.key and oras.is_key(me.place.key) and me.place.key or oras.STARTER,
       state = "box" })
   elseif action == "revert_open" then
     if math.type(value) == "integer" then self:open_corr({ kind = "revert", target = value }) end

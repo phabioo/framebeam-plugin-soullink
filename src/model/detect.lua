@@ -11,9 +11,10 @@ local D = {}
 -- Snapshot (what the caller passes; model/snapshot.lua builds it from pokemon.core):
 --   team     list of generic records, or nil = unknown
 --   boxes    list of boxes (each a list of records) or a flat list of records, or nil = unknown
---   location { zone = number?, name = string? }   or nil
---   battle   { active = bool, wild = bool, horde = bool?, foes = {records} }  or nil
---   encounters list of { species, form?, shiny?, horde? } newly seen encounters, or nil
+--   location { zone = number?, location = number? (location name id), name = string? }   or nil
+--   battle   { active = bool, wild = bool, horde = bool?, foes = {records}, own = {records}? }  or nil
+--   encounters pokemon.core v0.3: list (oldest first) of { seq, species, form?, shiny?, horde?, location? };
+--              entries with seq > state.enc_seq are new. Without seq (older shape): all entries are new.
 --   badges   number | { count = n } | list of booleans
 -- Facts (kind): place, catch, evolve, death, moved, encounter, missed. See docs/architecture.md.
 
@@ -55,9 +56,16 @@ end
 
 local function battle_info(snap)
   local b = snap.battle
-  if type(b) ~= "table" or type(b.active) ~= "boolean" then return { known = false } end
+  if type(b) ~= "table" or type(b.active) ~= "boolean" then return { known = false, own = {} } end
+  local own = {}
+  if type(b.own) == "table" then
+    for _, r in ipairs(b.own) do
+      local pid = type(r) == "table" and util.hex8(r.personality)
+      if pid and type(r.hp) == "number" then own[pid] = r.hp end
+    end
+  end
   return { known = true, active = b.active, wild = b.wild == true, horde = b.horde == true,
-           foes = type(b.foes) == "table" and b.foes or (type(b.foe) == "table" and { b.foe } or {}) }
+           foes = type(b.foes) == "table" and b.foes or (type(b.foe) == "table" and { b.foe } or {}), own = own }
 end
 
 -- Is a line (family) already owned by a tracked mon that counts for the dupes clause?
@@ -78,29 +86,58 @@ local function zone_id(z)
   return nil
 end
 
---- Place from the reported zone. A mapped zone sets the place automatically (manual = false). A
---- manual place wins for as long as the zone stays the same; when the zone changes, the zone table
---- decides again. An unmapped zone leaves the key empty (the UI asks which route this is).
-local function update_place(st, loc, facts, zones)
-  local zone = type(loc) == "table" and zone_id(loc.zone)
-  if not zone then return end
+-- Display name of a species: the record's own text, else the resolver; remembered in the state.
+local function note_species(st, opts, species, hint)
+  if math.type(species) ~= "integer" then return hint end
+  local name = (type(hint) == "string" and hint ~= "") and hint or nil
+  if not name and opts.names and opts.names.species then name = opts.names.species(species) end
+  if name then state.note_name(st, "sp", species, name) end
+  return name
+end
+
+--- Place from the reported location. With a location name id (pokemon-core v0.3) and the encounter
+--- areas, the place is the area `loc:<id>`; a location without encounter slots (town) has no key
+--- ("no encounters here"). Without a location id the zone table decides (fallback; the UI asks for
+--- unmapped zones). A manual place wins for as long as its anchor (location, else zone) stays the
+--- same; when it changes, detection decides again.
+local function update_place(st, loc, facts, opts)
+  if type(loc) ~= "table" then return end
+  local zone, lid = zone_id(loc.zone), zone_id(loc.location)
+  local areas = opts.areas
+  local by_area = lid ~= nil and areas ~= nil
+  if lid ~= nil and areas == nil and not opts.areas_unsupported then return end -- areas still loading
+  if not by_area then lid = nil end
+  if not by_area and not zone then return end
   local old = st.place or { manual = false }
-  if old.manual and (old.zone == nil or old.zone == zone) then
-    old.zone = zone -- remember the zone the manual place belongs to
-    st.place = old
-    return
+  if old.manual then
+    local same
+    if old.loc ~= nil then same = lid ~= nil and old.loc == lid
+    else same = old.zone == nil or old.zone == zone end
+    if same then
+      old.zone = zone or old.zone
+      if lid ~= nil then old.loc = lid end
+      st.place = old
+      return
+    end
   end
-  local mapped = zones[zone]
   local new
-  if mapped ~= nil then
-    new = { key = mapped or nil, name = loc.name, zone = zone, manual = false }
+  if by_area then
+    local key = areas.set[lid] and oras.area_key(lid) or nil
+    local name = (areas.names and areas.names[lid]) or loc.name
+    new = { key = key, name = name, zone = zone, loc = lid, manual = false }
+    if key then state.note_name(st, "loc", lid, name) end
   else
-    new = { name = loc.name, zone = zone, manual = false }
+    local mapped = (opts.zones or oras.ZONES)[zone]
+    if mapped ~= nil then
+      new = { key = mapped or nil, name = loc.name, zone = zone, manual = false }
+    else
+      new = { name = loc.name, zone = zone, manual = false }
+    end
   end
-  if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or old.manual then
+  if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or new.loc ~= old.loc or old.manual then
     st.place = new
     if new.key ~= old.key or new.name ~= old.name then
-      facts[#facts + 1] = { kind = "place", key = new.key, name = new.name, zone = new.zone,
+      facts[#facts + 1] = { kind = "place", key = new.key, name = new.name, zone = new.zone, loc = new.loc,
                             manual = false, previous = old.key }
     end
   end
@@ -108,10 +145,10 @@ end
 
 --- Set the place by hand. `input` is a route key ("route-104", "starter", "place:<text>") or free
 --- text typed by the user (becomes "place:<text>"); nil/"" clears the place. `name` is optional
---- display text, `zone` the zone the player is in right now (nil when the core reports none): the
---- manual place wins until the zone changes. Returns the new state and a place fact (nil when
---- nothing changed).
-function D.set_place(prev, input, name, zone)
+--- display text, `zone` / `loc` the zone and location id the player is in right now (nil when the
+--- core reports none): the manual place wins until that anchor changes. Returns the new state and
+--- a place fact (nil when nothing changed).
+function D.set_place(prev, input, name, zone, loc)
   local st = state.ensure(util.copy(prev))
   local old = st.place or { manual = false }
   local key
@@ -119,16 +156,40 @@ function D.set_place(prev, input, name, zone)
     key = oras.is_key(input) and input or oras.custom_key(input)
   end
   zone = zone_id(zone) or (old.manual and old.zone) or nil
-  st.place = { key = key, name = name, zone = zone, manual = true }
+  loc = zone_id(loc) or (old.manual and old.loc) or nil
+  st.place = { key = key, name = name, zone = zone, loc = loc, manual = true }
   if key == old.key and name == old.name and old.manual then return st, nil end
   return st, { kind = "place", key = key, name = name, manual = true, previous = old.key }
 end
 
-local function handle_encounter(st, cfg, pk, foe, horde, facts, family)
+-- Pairs-differ-primary-type clause: the creature's primary type is already taken by a partner's
+-- creature on that route. Needs opts.types(species, form) and opts.partner_types(route).
+local function type_clash(cfg, opts, route, species, form)
+  if not cfg.rules.pairs_differ_primary_type or not route or not opts.types or not opts.partner_types then
+    return false, nil
+  end
+  local ty = opts.types(species, form)
+  if ty == nil then return false, nil end
+  local taken = opts.partner_types(route)
+  return type(taken) == "table" and taken[ty] == true, ty
+end
+
+-- The route a wild encounter belongs to: a manual place, else the area of the encounter's location
+-- (core v0.3), else the current place.
+local function encounter_route(st, e, opts)
+  if st.place.manual and st.place.key then return st.place.key end
+  local lid = zone_id(e.location)
+  if lid ~= nil and opts.areas and opts.areas.set[lid] then return oras.area_key(lid) end
+  return st.place.key
+end
+
+local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
   local fact = { kind = "encounter", route = pk, species = foe.species, form = foe.form,
                  shiny = foe.shiny == true, horde = horde, counts = false }
+  fact.species_name = note_species(st, opts, foe.species, foe.species_name)
   local r = cfg.rules
   local existing = pk and st.routes[pk]
+  local clash = type_clash(cfg, opts, pk, foe.species, foe.form)
   if horde and not r.hordes_count then
     fact.why = "horde"
   elseif pk == nil then
@@ -137,6 +198,8 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family)
     fact.why = "shiny"
   elseif r.dupes_clause and owns_line(st, foe.species, family) then
     fact.why = "dupe"
+  elseif clash then
+    fact.why = "type"
   elseif existing and r.first_encounter_only then
     fact.why = "used"
   else
@@ -148,20 +211,23 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family)
   facts[#facts + 1] = fact
 end
 
-local function handle_catch(st, cfg, c, pk, starter, facts, family)
+local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
   local rec, r = c.rec, cfg.rules
   local dupe = r.dupes_clause and owns_line(st, rec.species, family) -- before the mon is added
+  local clash, ty = type_clash(cfg, opts, pk, rec.species, rec.form)
   local mon = {
     species = rec.species, form = rec.form, nickname = util.clean_text(rec.nickname, 24),
     level = rec.level, shiny = rec.shiny == true or nil, route = pk, where = c.where,
     hp = type(rec.hp) == "number" and rec.hp or nil,
-    mhp = type(rec.max_hp) == "number" and rec.max_hp or nil,
+    mhp = type(rec.max_hp) == "number" and rec.max_hp or nil, ty = ty,
   }
+  if r.pairs_differ_primary_type and ty == nil and opts.types then mon.ty = opts.types(rec.species, rec.form) end
   if rec.nicknamed == false then mon.nicknamed = false end
   st.mons[c.pid] = mon
   local fact = { kind = "catch", mon = c.pid, species = rec.species, form = rec.form,
                  nickname = mon.nickname, level = rec.level, shiny = rec.shiny == true,
                  route = pk, where = c.where, counts = false, starter = starter or nil }
+  fact.species_name = note_species(st, opts, rec.species, rec.species_name)
   local existing = pk and st.routes[pk]
   if rec.egg then
     mon.gift, mon.why = true, "gift"
@@ -172,6 +238,8 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family)
     mon.why, fact.why = "shiny", "shiny"
   elseif dupe then
     mon.why, fact.why = "dupe", "dupe"
+  elseif clash and not starter then
+    mon.why, fact.why = "type", "type"
   else
     local entry = { status = "caught", mon = c.pid, species = rec.species,
                     kind = starter and "starter" or "wild" }
@@ -188,12 +256,36 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family)
   facts[#facts + 1] = fact
 end
 
+-- The route with the one pending encounter (a battle that has not ended in a catch or a miss), or nil.
+local function pending_route(st)
+  local found
+  for key, e in pairs(st.routes) do
+    if e.status == "encounter" then
+      if found then return nil end
+      found = key
+    end
+  end
+  return found
+end
+
+local function newest_seq(list)
+  local max = 0
+  for _, e in ipairs(list) do if e.seq > max then max = e.seq end end
+  return max
+end
+
 --- diff(prev, snap, cfg, opts) -> new_state, facts
 ---   prev  own state (nil = fresh); never modified
 ---   snap  see the snapshot description above
 ---   cfg   result of rules.parse (or flat rule flags)
 ---   opts  { family = function(species) -> family id (default: species itself),
----           zones = zone -> route key table (default data.oras.ZONES),
+---           zones = zone -> route key table (fallback without a location id, default data.oras.ZONES),
+---           areas = { set = { [location id] = true }, order = { location id, ... }, names = { [id] = name } }
+---                   (pokemon-core areas(); nil while not ready),
+---           areas_unsupported = bool (the core has no areas(): the zone table is the fallback),
+---           names = { species = function(id) -> name|nil },   display names read from the game
+---           types = function(species, form) -> primary type id|nil,
+---           partner_types = function(route key) -> { [type id] = true } of the partners' creatures there,
 ---           first = "auto"|"baseline"|"starter" (what the first complete snapshot means),
 ---           game = { id, language } }
 --- Tracking starts with the first snapshot where team and boxes are both known: then either
@@ -210,8 +302,16 @@ function D.diff(prev, snap, cfg, opts)
     st.game.id = st.game.id or opts.game.id
     st.game.language = st.game.language or opts.game.language
   end
+  if opts.areas and type(opts.areas.order) == "table" then
+    local o, same = opts.areas.order, type(st.areas) == "table" and #st.areas == math.min(#opts.areas.order, state.MAX_AREAS)
+    if same then for i, id in ipairs(st.areas) do if o[i] ~= id then same = false; break end end end
+    if not same then
+      st.areas = {}
+      for i = 1, math.min(#o, state.MAX_AREAS) do st.areas[i] = o[i] end
+    end
+  end
 
-  update_place(st, snap.location, facts, opts.zones or oras.ZONES)
+  update_place(st, snap.location, facts, opts)
   local b = badge_count(snap.badges)
   if b then st.badges = b end
 
@@ -219,12 +319,27 @@ function D.diff(prev, snap, cfg, opts)
   local bat = battle_info(snap)
   local catch_place
 
+  -- encounters() with seq: only entries newer than the last handled one count
+  local enc = {}
+  local seq_mode = false
+  if type(snap.encounters) == "table" then
+    local first = snap.encounters[1]
+    seq_mode = first == nil or (type(first) == "table" and math.type(first.seq) == "integer")
+    if seq_mode then
+      for _, e in ipairs(snap.encounters) do
+        if type(e) == "table" and math.type(e.seq) == "integer" then enc[#enc + 1] = e end
+      end
+      table.sort(enc, function(x, y) return x.seq < y.seq end)
+    end
+  end
+
   if not st.started then
     if not (team_known and boxes_known) then return st, facts end
     local first = opts.first or "auto"
     local starter = first == "starter"
       or (first == "auto" and #list == 1 and list[1].where == "team" and not list[1].rec.egg)
     st.started = true
+    if seq_mode then st.enc_seq = newest_seq(enc) end -- encounters before the tracking started are old
     if not starter then
       for _, c in ipairs(list) do st.baseline[c.pid] = true end
       st.inb = bat.known and bat.active or false
@@ -241,8 +356,10 @@ function D.diff(prev, snap, cfg, opts)
       m.miss = nil
       if m.species ~= rec.species then
         facts[#facts + 1] = { kind = "evolve", mon = pid, from = m.species, to = rec.species,
-                              nickname = m.nickname, route = m.route }
+                              nickname = m.nickname, route = m.route,
+                              species_name = note_species(st, opts, rec.species, rec.species_name) }
         m.species = rec.species
+        if m.ty ~= nil and opts.types then m.ty = opts.types(rec.species, rec.form) or m.ty end
       end
       m.form = rec.form
       m.level = rec.level or m.level
@@ -253,13 +370,25 @@ function D.diff(prev, snap, cfg, opts)
         facts[#facts + 1] = { kind = "moved", mon = pid, from = m.where, to = c.where }
         m.where = c.where
       end
-      if type(rec.hp) == "number" then
-        if m.hp and m.hp > 0 and rec.hp <= 0 then
+      -- fainted: live team hp reaches 0, or the battle reports it for the own battler first
+      -- (m.fz: counted from the battle, the team record has not caught up yet)
+      local team_hp = type(rec.hp) == "number" and rec.hp or nil
+      local own_zero = bat.own[pid] ~= nil and bat.own[pid] <= 0
+      if own_zero or (team_hp and team_hp <= 0) then
+        if m.hp and m.hp > 0 and not m.fz then
           m.deaths = (m.deaths or 0) + 1
           facts[#facts + 1] = { kind = "death", mon = pid, species = m.species, nickname = m.nickname,
-                                route = m.route, deaths = m.deaths }
+                                route = m.route, deaths = m.deaths,
+                                species_name = note_species(st, opts, m.species, rec.species_name) }
         end
-        m.hp = rec.hp
+        m.hp = 0
+        m.fz = (own_zero and not (team_hp and team_hp <= 0)) or nil
+      elseif team_hp then
+        if m.fz and bat.known and bat.active then
+          m.hp = 0 -- stale party data during the battle
+        else
+          m.hp, m.fz = team_hp, nil
+        end
       end
       if type(rec.max_hp) == "number" then m.mhp = rec.max_hp end
     elseif team_known and boxes_known and m.where ~= "gone" then
@@ -271,10 +400,10 @@ function D.diff(prev, snap, cfg, opts)
     end
   end
 
-  -- new mons
+  -- new mons: a catch lands on the pending encounter's route, else on the current place
   for _, c in ipairs(list) do
     if not st.baseline[c.pid] and not st.mons[c.pid] then
-      handle_catch(st, cfg, c, catch_place or st.place.key, catch_place ~= nil, facts, family)
+      handle_catch(st, cfg, c, catch_place or pending_route(st) or st.place.key, catch_place ~= nil, facts, family, opts)
     end
   end
 
@@ -287,9 +416,21 @@ function D.diff(prev, snap, cfg, opts)
   end
 
   -- encounters and missed routes
+  if seq_mode then
+    if st.enc_seq == nil then
+      st.enc_seq = newest_seq(enc)
+    else
+      for _, e in ipairs(enc) do
+        if e.seq > st.enc_seq then
+          st.enc_seq = e.seq
+          handle_encounter(st, cfg, encounter_route(st, e, opts), e, e.horde == true, facts, family, opts)
+        end
+      end
+    end
+  end
   if bat.known then
-    if bat.active and not st.inb and bat.wild then
-      handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family)
+    if not seq_mode and bat.active and not st.inb and bat.wild then
+      handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family, opts)
     elseif not bat.active and st.inb then
       for _, key in ipairs(util.keys(st.routes)) do
         local e = st.routes[key]
@@ -300,10 +441,10 @@ function D.diff(prev, snap, cfg, opts)
       end
     end
     st.inb = bat.active
-  elseif type(snap.encounters) == "table" then
+  elseif not seq_mode and type(snap.encounters) == "table" then
     for _, e in ipairs(snap.encounters) do
       if type(e) == "table" then
-        handle_encounter(st, cfg, st.place.key, e, e.horde == true, facts, family)
+        handle_encounter(st, cfg, st.place.key, e, e.horde == true, facts, family, opts)
       end
     end
   end

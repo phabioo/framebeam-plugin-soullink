@@ -20,10 +20,11 @@ t.case("ensure completes foreign states", function()
 end)
 
 local function big_state()
-  local tr = B.tracker("u-a", B.cfg("soullink"))
+  -- display names are stored too (one per species id): the worst realistic size
+  local tr = B.tracker("u-a", B.cfg("soullink"), nil, { names = { species = function(id) return "Synthetic Species " .. id end } })
   tr:start()
   local routes = {}
-  for _, k in ipairs(require("data.oras").ROUTE_KEYS) do routes[#routes + 1] = k end
+  for n = 1, 40 do routes[#routes + 1] = "loc:" .. (200 + n) end
   for i = 1, 126 do
     tr:place(routes[(i - 1) % #routes + 1])
     local team = i <= 6

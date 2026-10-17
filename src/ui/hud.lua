@@ -17,7 +17,7 @@ function M.build(ctx)
   local status = me.place.status
   local compact = { type = "row", id = "hud-row", gap = 8, align = "center", children = {
     { type = "badge", id = "hud-sl", text = "SL", tone = "info" },
-    { type = "text", id = "hud-place", text = common.place_label(me.place, tr), style = "body" },
+    { type = "text", id = "hud-place", text = common.short(common.place_label(me.place, tr, view), 24), style = "body" },
     { type = "text", id = "hud-status", text = dot(status) .. " " .. tr("hud_status_" .. status),
       tone = common.status_tone(status), style = "meta" },
   } }

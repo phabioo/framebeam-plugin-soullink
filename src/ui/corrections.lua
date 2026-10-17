@@ -3,18 +3,9 @@
 -- nickname?, level?, state?, gift?, target?, note?, error? }; fields change through the actions
 -- "cf:<field>", "corr_submit" posts the event, "corr_cancel" closes the form.
 local common = require("ui.common")
-local oras = require("data.oras")
 local corrections = require("model.corrections")
 
 local M = {}
-
-local function route_options(tr, with_none)
-  local opts = {}
-  if with_none then opts[#opts + 1] = { value = "none", label = tr("c_group_none") } end
-  opts[#opts + 1] = { value = oras.STARTER, label = oras.label(oras.STARTER, tr) }
-  for _, k in ipairs(oras.ROUTE_KEYS) do opts[#opts + 1] = { value = k, label = oras.label(k, tr) } end
-  return opts
-end
 
 --- Build the corrections payload spec from the form; returns spec or nil, error key.
 function M.to_spec(corr)
@@ -69,7 +60,7 @@ function M.section(ctx)
   local kids = {}
   local function add(b) kids[#kids + 1] = b end
   local k = corr.kind
-  local route_label = corr.route and oras.label(corr.route, tr) or ""
+  local route_label = corr.route and common.route_label(ctx, corr.route) or ""
   local others = common.others_names(view, ctx.me)
 
   if k == "doesnt_count" then
@@ -86,12 +77,13 @@ function M.section(ctx)
     add({ type = "textfield", id = "c-note", action = "cf:note", text = corr.note or "", placeholder = tr("c_reason_placeholder") })
   elseif k == "set_group" then
     add({ type = "text", id = "c-text", text = tr("c_group_text"), style = "meta" })
-    local opts = route_options(tr, true)
+    local opts = common.route_options(ctx, tr("c_group_none"), corr.group)
     add({ type = "select", id = "c-group", action = "cf:group", options = opts, selected = corr.group or "none" })
   elseif k == "add" then
     add({ type = "text", id = "c-text", text = tr("c_add_text"), style = "meta" })
-    add({ type = "select", id = "c-route", action = "cf:route", options = route_options(tr, false),
-      selected = corr.route or oras.ROUTE_KEYS[1] })
+    local opts = common.route_options(ctx, nil, corr.route)
+    add({ type = "select", id = "c-route", action = "cf:route", options = opts,
+      selected = corr.route or (opts[1] and opts[1].value) })
     add({ type = "textfield", id = "c-species", action = "cf:species", text = corr.species and tostring(corr.species) or "",
       placeholder = tr("c_species_placeholder") })
     add({ type = "textfield", id = "c-nick", action = "cf:nickname", text = corr.nickname or "", placeholder = tr("c_nick_placeholder") })

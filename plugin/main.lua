@@ -50,6 +50,8 @@ A.HUD_MS = 3000      -- HUD stays expanded after a linked death
 A.NOTICE_TRIES = 40  -- renders to wait for the state that shows a death
 A.MAX_ZONES = 120    -- learned zone mappings kept in the own state
 A.CAL_STEPS = { [2] = true, [10] = true, [40] = true }
+A.NAME_BUDGET = 16   -- core name() lookups per poll
+A.CORE = "pokemon.core"
 
 function A.new(fb)
   local self = setmetatable({}, A)
@@ -64,6 +66,9 @@ function A.new(fb)
   self.dirty = true
   self.errors = {}
   self.unsupported = {} -- parts of pokemon.core that answered "unsupported"
+  self.gnames = { species = {}, location = {} } -- names read from the game (core name())
+  self.types = {}          -- "species:form" -> primary type id
+  self.name_budget = A.NAME_BUDGET
   return self
 end
 
@@ -72,6 +77,97 @@ local function warn_once(self, key, ...)
     self.errors[key] = true
     self.fb.log.warn(...)
   end
+end
+
+-- ---------------------------------------------------------------- names and areas from the core
+
+local function int(v)
+  if math.type(v) == "float" then v = math.tointeger(v) end
+  if math.type(v) == "integer" then return v end
+  return nil
+end
+
+--- Display name read from the game (`name(kind, id)`), cached; a few lookups per poll.
+--- kind = "species" | "location". nil while the game text is not ready or unsupported.
+function A:game_name(kind, id)
+  id = int(id)
+  if id == nil then return nil end
+  local cached = self.gnames[kind][id]
+  if cached then return cached end
+  if kind == "location" and self.areas_info and self.areas_info.names[id] then return self.areas_info.names[id] end
+  if self.name_unsupported or self.name_budget <= 0 or self.viewing then return nil end
+  self.name_budget = self.name_budget - 1
+  local ok, v, why = pcall(self.fb.call, A.CORE, "name", kind, id)
+  if not ok or why == "unsupported" then self.name_unsupported = true; return nil end
+  if type(v) == "string" and v ~= "" then
+    self.gnames[kind][id] = v
+    return v
+  end
+  return nil
+end
+
+--- Encounter areas of the game (`areas()`), loaded once: { set, order, names }. nil while not ready.
+function A:refresh_areas()
+  if self.areas_info or self.areas_unsupported or self.viewing then return end
+  local now = self.fb.clock()
+  if self.areas_next and now < self.areas_next then return end
+  local ok, list, why = pcall(self.fb.call, A.CORE, "areas")
+  if not ok or why == "unsupported" then self.areas_unsupported = true; return end
+  if type(list) ~= "table" then
+    self.areas_next = now + 2000
+    return
+  end
+  local info = { set = {}, order = {}, names = {} }
+  for _, a in ipairs(list) do
+    local id = type(a) == "table" and int(a.id) or nil
+    if id and not info.set[id] then
+      info.set[id] = true
+      info.order[#info.order + 1] = id
+      if type(a.name) == "string" and a.name ~= "" then info.names[id] = a.name end
+    end
+  end
+  self.areas_info = info
+  self.dirty = true
+end
+
+--- Primary type of a species (`species_info`), cached; nil when unknown.
+function A:primary_type(species, form)
+  species = int(species)
+  if species == nil or self.types_unsupported then return nil end
+  local key = species .. ":" .. tostring(int(form) or 0)
+  if self.types[key] ~= nil then return self.types[key] or nil end
+  local ok, v, why = pcall(self.fb.call, A.CORE, "species_info", species, int(form) or 0)
+  if not ok or why == "unsupported" then self.types_unsupported = true; return nil end
+  local t = type(v) == "table" and type(v.types) == "table" and int(v.types[1]) or nil
+  if t ~= nil then self.types[key] = t end
+  return t
+end
+
+--- Primary types of the partners' counted creatures on a route.
+function A:partner_types(route)
+  local out = {}
+  for uid, st in pairs(self:states()) do
+    local e = uid ~= self.me and type(st) == "table" and type(st.routes) == "table" and st.routes[route]
+    local m = e and e.status == "caught" and e.mon and type(st.mons) == "table" and st.mons[e.mon]
+    if m and m.ty ~= nil then out[m.ty] = true end
+  end
+  return out
+end
+
+--- Species name for texts: the record's own text, the game, or the names stored in the run.
+function A:species_text(id, hint)
+  if type(hint) == "string" and hint ~= "" then return hint end
+  local live = self:game_name("species", id)
+  if live then return live end
+  local nm = self.view and self.view.names and self.view.names.sp[tostring(id)]
+  if nm then return nm end
+  local own = self.st and self.st.names and self.st.names.sp[tostring(id)]
+  return own
+end
+
+function A:area_name(id)
+  id = int(id)
+  return id and ((self.areas_info and self.areas_info.names[id]) or self.gnames.location[id]) or nil
 end
 
 -- ---------------------------------------------------------------- start
@@ -162,11 +258,18 @@ function A:poll(full)
     unsupported = self.unsupported })
   if snap.boxes then self.boxes = snap.boxes end
   local game = self.fb.game or {}
-  local zone = type(snap.location) == "table" and snap.location.zone or nil
-  if math.type(zone) == "float" then zone = math.tointeger(zone) end
-  self.cur_zone = math.type(zone) == "integer" and zone or nil
+  local loc = type(snap.location) == "table" and snap.location or {}
+  self.cur_zone, self.cur_loc = int(loc.zone), int(loc.location)
+  if self.cur_zone ~= nil or self.cur_loc ~= nil then self.location_ok = true end
+  if snap.badges ~= nil then self.badges_seen = true end
+  self.name_budget = A.NAME_BUDGET
+  self:refresh_areas()
   local st, facts = detect.diff(self.st, snap, cfg, { game = { id = game.code, language = game.language },
-    zones = view_mod.merge_zones(self.run, self:states()) })
+    zones = view_mod.merge_zones(self.run, self:states()),
+    areas = self.areas_info, areas_unsupported = self.areas_unsupported,
+    names = { species = function(id) return self:game_name("species", id) end },
+    types = function(species, form) return self:primary_type(species, form) end,
+    partner_types = function(route) return self:partner_types(route) end })
   self:commit(st, facts)
 end
 
@@ -193,14 +296,21 @@ function A:player_name(id)
   return tostring(id)
 end
 
+--- Context for labels outside a render (names from the view or the own state, live area names).
+function A:label_ctx()
+  local view = self.view or { names = (self.st and self.st.names) or { sp = {}, loc = {} } }
+  return { tr = self.tr, view = view, area_name = function(id) return self:area_name(id) end }
+end
+
 function A:place_text(route)
-  return route and oras.label(route, self.tr) or self.tr("place_none")
+  return route and common.route_label(self:label_ctx(), route) or self.tr("place_none")
 end
 
 function A:fact_text(f)
   local tr = self.tr
   local player = self:player_name(self.me)
-  local mon = common.mon_name({ nickname = f.nickname, species = f.species })
+  local sname = f.species and self:species_text(f.species, f.species_name) or nil
+  local mon = common.mon_name({ nickname = f.nickname, species = f.species, species_name = sname })
   local text
   if f.kind == "catch" then
     text = f.route and tr("ev_catch", { player = player, mon = mon, place = self:place_text(f.route) })
@@ -208,7 +318,7 @@ function A:fact_text(f)
   elseif f.kind == "death" then
     text = tr("ev_death", { player = player, mon = mon })
   elseif f.kind == "encounter" then
-    local m = "#" .. tostring(f.species or "?")
+    local m = common.species_label({ species = f.species, species_name = sname })
     text = f.route and tr("ev_encounter", { player = player, mon = m, place = self:place_text(f.route) })
       or tr("ev_encounter_noplace", { player = player, mon = m })
   elseif f.kind == "missed" then
@@ -246,7 +356,8 @@ function A:on_event(ev)
   if ev.type == events.TYPES.death then
     self.queue[#self.queue + 1] = { ev = ev, tries = 0 }
   elseif ev.type == events.TYPES.catch and ev.user_id ~= self.me and p.counts then
-    local who = { player = self:player_name(ev.user_id), mon = common.mon_name({ nickname = p.nickname, species = p.species }) }
+    local who = { player = self:player_name(ev.user_id), mon = common.mon_name({ nickname = p.nickname, species = p.species,
+      species_name = self:species_text(p.species, p.species_name) }) }
     if p.route then who.place = self:place_text(p.route) end
     self:notify({ tone = "info", text = self.tr(p.route and "note_catch" or "note_catch_noplace", who) })
   end
@@ -319,6 +430,9 @@ function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
            events = self.events, hud_death = self.hud_until and self.hud_text or nil,
            map = self.maps and self.maps:view() or nil,
+           can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
+           badges_manual = not self.badges_seen,
+           area_name = function(id) return self:area_name(id) end,
            icon = self.icons and function(species, form) return self.icons:src(species, form) end or nil }
 end
 
@@ -338,15 +452,7 @@ function A:render()
     self.sync:push("run", screen.build(ctx))
     return
   end
-  if self.ui.panel_run then
-    -- the panel itself shows the run view (the platform has no call that opens the screen slot)
-    local pctx = {}
-    for k, v in pairs(ctx) do pctx[k] = v end
-    pctx.compact, pctx.tab = true, self.ui.panel_tab or 1
-    self.sync:push("panel", screen.build(pctx))
-  else
-    self.sync:push("panel", panel.build(ctx))
-  end
+  self.sync:push("panel", panel.build(ctx))
   self.sync:push("hud", hud.build(ctx))
   self.sync:push("screen", screen.build(ctx))
 
@@ -355,7 +461,7 @@ function A:render()
   for id, p in pairs(matched) do
     local slot = "tile:" .. id
     live[slot] = true
-    self.sync:push(slot, tile.build(self.tr, p))
+    self.sync:push(slot, tile.build(self.tr, p, view))
   end
   for slot in pairs(self.tile_slots) do
     if not live[slot] then self.sync:clear(slot) end
@@ -387,7 +493,7 @@ function A:correction_text(spec)
   if p.kind == "add" then mon = common.mon_name({ nickname = p.nickname, species = p.species }) end
   return util.clean_text(tr("ev_c_" .. p.kind, {
     player = self:player_name(self.me), target = p.user and self:player_name(p.user) or "",
-    route = p.route and oras.label(p.route, tr) or (p.group and p.group ~= "none" and oras.label(p.group, tr)) or "",
+    route = p.route and self:place_text(p.route) or (p.group and p.group ~= "none" and self:place_text(p.group)) or "",
     mon = mon or "?", seq = p.target or "", reason = p.reason or "",
   }), 280)
 end
@@ -444,10 +550,14 @@ end
 
 function A:set_place(input)
   if not self:writable() then return end
-  local st, fact = detect.set_place(self.st, input, nil, self.cur_zone)
+  local st, fact = detect.set_place(self.st, input, nil, self.cur_zone, self.cur_loc)
   local key = st.place.key
-  -- the answer for a reported zone is remembered and shared through the own state
-  if key and key ~= oras.STARTER then self:learn_zone(st, self.cur_zone, key) end
+  local id = key and oras.area_id(key)
+  if id then state.note_name(st, "loc", id, self:game_name("location", id)) end
+  -- fallback without a location id: the answer for a reported zone is remembered and shared
+  if key and key ~= oras.STARTER and not (self.cur_loc and self.areas_info) then
+    self:learn_zone(st, self.cur_zone, key)
+  end
   self:commit(st, { fact })
 end
 
@@ -455,7 +565,7 @@ end
 
 function A:calib_route(route)
   local c = self.ui.calib
-  if not c or not oras.route_number(route) then return end
+  if not c or not oras.is_route(route) then return end
   local m = self.maps
   c.route, c.msg = route, nil
   local at = m:merged()[route]
@@ -472,6 +582,7 @@ function A:map_action(action, value)
     self.ui.calib = nil
   elseif action == "calib_toggle" then
     self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
+    m.order = self.view and self.view.order or nil
   elseif c and action == "calib_route" then
     self:calib_route(value)
   elseif c and action == "calib_step" then
@@ -486,6 +597,7 @@ function A:map_action(action, value)
   elseif c and action == "calib_set" and c.route and c.x then
     c.msg = m:set_coord(c.route, c.x, c.y) and "saved" or "failed"
   elseif c and action == "calib_export" then
+    m.order = self.view and self.view.order or nil
     c.msg = m:export_line() and "exported" or "none"
   end
   self.dirty = true
@@ -493,10 +605,19 @@ end
 
 -- ---------------------------------------------------------------- actions
 
+--- Open the run screen (screen slot) over the game: fb.ui.open("screen"), only when the platform has it.
+--- Without it the panel says so (ctx.can_open).
+function A:open_screen()
+  if self.viewing or type(self.fb.ui.open) ~= "function" then return false end
+  local ok, err = pcall(self.fb.ui.open, "screen")
+  if not ok then warn_once(self, "open", "ui.open failed: " .. tostring(err)) end
+  return ok
+end
+
 function A:on_action(action, value, slot)
   if slot == "hotkey" then
     if action == "toggle-hud" then return end -- the host shows or hides the widget
-    if action == "open-run" then action = "open_run_toggle"
+    if action == "open-run" then action = "open_run"
     elseif action == "doesnt-count" then action, value = "dc_open", nil
     else return end
   end
@@ -504,19 +625,15 @@ function A:on_action(action, value, slot)
   local me = my_player(self)
   local writable = self:writable()
 
-  if action == "open_run" or action == "open_run_toggle" then
-    -- the panel switches between the live view and the run view; the screen slot starts at its first tab
-    local open = action == "open_run" or not self.ui.panel_run
-    if open and not self.ui.panel_run then self.ui.panel_tab = 1 end
-    self.ui.panel_run = open
-    self.ui.screen_tab = 1
-    self.dirty = true
-  elseif action == "panel_back" then self.ui.panel_run = false; self.dirty = true
+  if action == "open_run" then
+    self:open_screen()
+  elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
+  elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
   elseif action == "tab" then
     if math.type(value) == "integer" then
-      if slot == "panel" then self.ui.panel_tab = value else self.ui.screen_tab = value end
+      self.ui.screen_tab = value
       self.dirty = true
     end
   elseif action:sub(1, 3) == "rf:" then self.ui.routes_filter = action:sub(4); self.dirty = true
@@ -526,7 +643,7 @@ function A:on_action(action, value, slot)
     if type(value) == "table" then
       if value.kind == "route" then
         self.ui.selected_route = value.id
-        if self.ui.calib and oras.route_number(value.id) then self:calib_route(value.id) end
+        if self.ui.calib and oras.is_route(value.id) then self:calib_route(value.id) end
       elseif value.kind == "filter" then self.ui.map_filter = value.value end
       self.dirty = true
     end
@@ -579,7 +696,7 @@ function A:on_action(action, value, slot)
   elseif action == "dead_open" then
     if me and me.mons[value] then self:open_corr({ kind = "mark_dead", mon = value }) end
   elseif action == "add_open" then
-    self:open_corr({ kind = "add", route = me and me.place.key and oras.is_key(me.place.key) and me.place.key or oras.ROUTE_KEYS[1],
+    self:open_corr({ kind = "add", route = me and me.place.key and oras.is_key(me.place.key) and me.place.key or oras.STARTER,
       state = "box" })
   elseif action == "revert_open" then
     if math.type(value) == "integer" then self:open_corr({ kind = "revert", target = value }) end
@@ -721,7 +838,8 @@ end
 __mod["app.maps"] = function(...)
 -- Region map from the player's own game: pokemon-core `map_candidates()` lists large images of the
 -- game files, `map_image(id)` returns one as PNG, `map_selected()` is the core's own pick. The
--- player chooses one (or the core's pick is used); the choice and the image are kept in the own cache:
+-- player always confirms one (the core's pick is only marked "suggested", never shown as the map
+-- on its own); the choice and the image are kept in the own cache:
 --   map/choice.txt   map id of the choice ("" = none)
 --   map/region.png   the chosen image
 --   map/cand-<n>-<id>.png   previews of the candidates
@@ -791,7 +909,7 @@ function M:load_coords()
   if id ~= self.id then return end
   local routes = s:match('"routes"%s*:%s*(%b{})') or ""
   for key, x, y in routes:gmatch('"([^"]+)"%s*:%s*{%s*"x"%s*:%s*(-?%d+)%s*,%s*"y"%s*:%s*(-?%d+)%s*}') do
-    if oras.is_key(key) then self.coords[key] = { x = tonumber(x), y = tonumber(y) } end
+    if oras.is_route(key) then self.coords[key] = { x = tonumber(x), y = tonumber(y) } end
   end
 end
 
@@ -814,7 +932,7 @@ end
 
 --- Record the position of a route (image pixels, clamped to the image).
 function M:set_coord(route, x, y)
-  if self.state ~= "ready" or not oras.route_number(route) then return false end
+  if self.state ~= "ready" or not oras.is_route(route) then return false end
   x = math.max(0, math.min(self.w, math.floor(x + 0.5)))
   y = math.max(0, math.min(self.h, math.floor(y + 0.5)))
   self.coords[route] = { x = x, y = y }
@@ -828,7 +946,7 @@ function M:export_line()
   local keys = {}
   for key in pairs(all) do keys[#keys + 1] = key end
   if #keys == 0 or not self.id then return nil end
-  table.sort(keys, oras.compare)
+  table.sort(keys, function(a, b) return oras.compare(a, b, self.order) end)
   local parts = {}
   for _, key in ipairs(keys) do
     local c = all[key]
@@ -873,7 +991,7 @@ function M:step(now)
     if now < self.next_at then return false end
     local ok, sel = self:call("map_selected")
     if not ok then self.state = "unsupported"; return true end
-    if type(sel) == "string" and sel ~= "" and self:adopt(sel) then return true end
+    self.suggested = (type(sel) == "string" and sel ~= "") and sel or nil -- marked, never adopted
     local ok2, list, why = self:call("map_candidates")
     if not ok2 then self.state = "unsupported"; return true end
     if type(list) ~= "table" then
@@ -920,7 +1038,8 @@ function M:view()
   local cands = {}
   for _, c in ipairs(self.cands) do
     local pv = self.preview[c.id]
-    cands[#cands + 1] = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = self.failed[c.id] }
+    cands[#cands + 1] = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = self.failed[c.id],
+      suggested = self.suggested ~= nil and self.suggested == c.id or nil }
   end
   return { state = self.state, id = self.id, w = self.w, h = self.h,
            src = self.state == "ready" and ("cache:" .. M.REGION) or nil,
@@ -1003,14 +1122,10 @@ local util = require("model.util")
 local M = {}
 
 M.STARTER = "starter"
+-- Legacy keys "route-101" .. "route-134" of runs started before 0.4.0: still read (label "Route N"),
+-- never offered again. Places come from the game now: "loc:<location name id>" (see areas()).
 M.FIRST_ROUTE = 101
 M.LAST_ROUTE = 134
-
---- Ordered route keys "route-101" .. "route-134".
-M.ROUTE_KEYS = {}
-for n = M.FIRST_ROUTE, M.LAST_ROUTE do
-  M.ROUTE_KEYS[#M.ROUTE_KEYS + 1] = "route-" .. n
-end
 
 --- zone id (pokemon-core `location().zone`) -> route key (string) or false (known zone that is not a
 --- route, e.g. a town). EMPTY on purpose: the table is unknown until recorded with the real game.
@@ -1035,7 +1150,7 @@ function M.level_cap(badges)
   return M.LEVEL_CAPS[badges]
 end
 
---- Route number of a key "route-NNN", or nil.
+--- Legacy route number of a key "route-NNN", or nil.
 function M.route_number(key)
   local n = type(key) == "string" and key:match("^route%-(%d+)$")
   n = n and tonumber(n)
@@ -1043,10 +1158,27 @@ function M.route_number(key)
   return nil
 end
 
---- True for "starter", a known route key or a free "place:<text>" key.
+--- Key of an encounter area ("loc:<location name id>"), or nil for a non-integer id.
+function M.area_key(id)
+  if math.type(id) == "float" then id = math.tointeger(id) end
+  if math.type(id) ~= "integer" or id < 0 or id > 999999 then return nil end
+  return "loc:" .. id
+end
+
+--- Location name id of an area key, or nil.
+function M.area_id(key)
+  local n = type(key) == "string" and key:match("^loc:(%d+)$")
+  n = n and #n <= 6 and tonumber(n)
+  return n and math.tointeger(n) or nil
+end
+
+--- Area key or legacy route key (a place that can carry a map position).
+function M.is_route(key) return M.area_id(key) ~= nil or M.route_number(key) ~= nil end
+
+--- True for "starter", an area key, a legacy route key or a free "place:<text>" key.
 function M.is_key(key)
   if type(key) ~= "string" then return false end
-  if key == M.STARTER or M.route_number(key) then return true end
+  if key == M.STARTER or M.is_route(key) then return true end
   local text = key:match("^place:(.+)$")
   return text ~= nil and util.clean_text(text, 48) == text
 end
@@ -1058,26 +1190,38 @@ function M.custom_key(text)
   return t and ("place:" .. t) or nil
 end
 
---- Sort index: starter first, routes in numeric order, free places after (by text).
-function M.order_index(key)
+--- Sort index. `order` (optional) maps an area key to its position in the game's order
+--- (view.order). Starter first, legacy routes in numeric order, areas in game order (unknown
+--- areas by id after the known ones), free places last.
+function M.order_index(key, order)
   if key == M.STARTER then return 0 end
   local n = M.route_number(key)
   if n then return n - M.FIRST_ROUTE + 1 end
-  return 1000
+  local id = M.area_id(key)
+  if id then return 100 + ((order and order[key]) or (50000 + id)) end
+  return 1000000
 end
 
---- Comparison function for route keys.
-function M.compare(a, b)
-  local ia, ib = M.order_index(a), M.order_index(b)
+--- Comparison function for route keys (optional game order map, see order_index).
+function M.compare(a, b, order)
+  local ia, ib = M.order_index(a, order), M.order_index(b, order)
   if ia ~= ib then return ia < ib end
   return tostring(a) < tostring(b)
 end
 
---- Display text. `tr` is fb.i18n.t (key, vars); free places keep the text as typed.
-function M.label(key, tr)
+--- Display text. `tr` is fb.i18n.t (key, vars); `names` (optional) is { loc = { ["<id>"] = name } }
+--- from the game (view.names). Free places keep the text as typed; an area without a known
+--- name shows "Area <id>".
+function M.label(key, tr, names)
   if key == M.STARTER then return tr("route_starter") end
   local n = M.route_number(key)
   if n then return tr("route", { n = n }) end
+  local id = M.area_id(key)
+  if id then
+    local nm = names and names.loc and names.loc[tostring(id)]
+    if type(nm) == "string" and nm ~= "" then return nm end
+    return tr("area", { n = id })
+  end
   local text = type(key) == "string" and key:match("^place:(.+)$")
   return text or tostring(key)
 end
@@ -1233,9 +1377,10 @@ local D = {}
 -- Snapshot (what the caller passes; model/snapshot.lua builds it from pokemon.core):
 --   team     list of generic records, or nil = unknown
 --   boxes    list of boxes (each a list of records) or a flat list of records, or nil = unknown
---   location { zone = number?, name = string? }   or nil
---   battle   { active = bool, wild = bool, horde = bool?, foes = {records} }  or nil
---   encounters list of { species, form?, shiny?, horde? } newly seen encounters, or nil
+--   location { zone = number?, location = number? (location name id), name = string? }   or nil
+--   battle   { active = bool, wild = bool, horde = bool?, foes = {records}, own = {records}? }  or nil
+--   encounters pokemon.core v0.3: list (oldest first) of { seq, species, form?, shiny?, horde?, location? };
+--              entries with seq > state.enc_seq are new. Without seq (older shape): all entries are new.
 --   badges   number | { count = n } | list of booleans
 -- Facts (kind): place, catch, evolve, death, moved, encounter, missed. See docs/architecture.md.
 
@@ -1277,9 +1422,16 @@ end
 
 local function battle_info(snap)
   local b = snap.battle
-  if type(b) ~= "table" or type(b.active) ~= "boolean" then return { known = false } end
+  if type(b) ~= "table" or type(b.active) ~= "boolean" then return { known = false, own = {} } end
+  local own = {}
+  if type(b.own) == "table" then
+    for _, r in ipairs(b.own) do
+      local pid = type(r) == "table" and util.hex8(r.personality)
+      if pid and type(r.hp) == "number" then own[pid] = r.hp end
+    end
+  end
   return { known = true, active = b.active, wild = b.wild == true, horde = b.horde == true,
-           foes = type(b.foes) == "table" and b.foes or (type(b.foe) == "table" and { b.foe } or {}) }
+           foes = type(b.foes) == "table" and b.foes or (type(b.foe) == "table" and { b.foe } or {}), own = own }
 end
 
 -- Is a line (family) already owned by a tracked mon that counts for the dupes clause?
@@ -1300,29 +1452,58 @@ local function zone_id(z)
   return nil
 end
 
---- Place from the reported zone. A mapped zone sets the place automatically (manual = false). A
---- manual place wins for as long as the zone stays the same; when the zone changes, the zone table
---- decides again. An unmapped zone leaves the key empty (the UI asks which route this is).
-local function update_place(st, loc, facts, zones)
-  local zone = type(loc) == "table" and zone_id(loc.zone)
-  if not zone then return end
+-- Display name of a species: the record's own text, else the resolver; remembered in the state.
+local function note_species(st, opts, species, hint)
+  if math.type(species) ~= "integer" then return hint end
+  local name = (type(hint) == "string" and hint ~= "") and hint or nil
+  if not name and opts.names and opts.names.species then name = opts.names.species(species) end
+  if name then state.note_name(st, "sp", species, name) end
+  return name
+end
+
+--- Place from the reported location. With a location name id (pokemon-core v0.3) and the encounter
+--- areas, the place is the area `loc:<id>`; a location without encounter slots (town) has no key
+--- ("no encounters here"). Without a location id the zone table decides (fallback; the UI asks for
+--- unmapped zones). A manual place wins for as long as its anchor (location, else zone) stays the
+--- same; when it changes, detection decides again.
+local function update_place(st, loc, facts, opts)
+  if type(loc) ~= "table" then return end
+  local zone, lid = zone_id(loc.zone), zone_id(loc.location)
+  local areas = opts.areas
+  local by_area = lid ~= nil and areas ~= nil
+  if lid ~= nil and areas == nil and not opts.areas_unsupported then return end -- areas still loading
+  if not by_area then lid = nil end
+  if not by_area and not zone then return end
   local old = st.place or { manual = false }
-  if old.manual and (old.zone == nil or old.zone == zone) then
-    old.zone = zone -- remember the zone the manual place belongs to
-    st.place = old
-    return
+  if old.manual then
+    local same
+    if old.loc ~= nil then same = lid ~= nil and old.loc == lid
+    else same = old.zone == nil or old.zone == zone end
+    if same then
+      old.zone = zone or old.zone
+      if lid ~= nil then old.loc = lid end
+      st.place = old
+      return
+    end
   end
-  local mapped = zones[zone]
   local new
-  if mapped ~= nil then
-    new = { key = mapped or nil, name = loc.name, zone = zone, manual = false }
+  if by_area then
+    local key = areas.set[lid] and oras.area_key(lid) or nil
+    local name = (areas.names and areas.names[lid]) or loc.name
+    new = { key = key, name = name, zone = zone, loc = lid, manual = false }
+    if key then state.note_name(st, "loc", lid, name) end
   else
-    new = { name = loc.name, zone = zone, manual = false }
+    local mapped = (opts.zones or oras.ZONES)[zone]
+    if mapped ~= nil then
+      new = { key = mapped or nil, name = loc.name, zone = zone, manual = false }
+    else
+      new = { name = loc.name, zone = zone, manual = false }
+    end
   end
-  if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or old.manual then
+  if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or new.loc ~= old.loc or old.manual then
     st.place = new
     if new.key ~= old.key or new.name ~= old.name then
-      facts[#facts + 1] = { kind = "place", key = new.key, name = new.name, zone = new.zone,
+      facts[#facts + 1] = { kind = "place", key = new.key, name = new.name, zone = new.zone, loc = new.loc,
                             manual = false, previous = old.key }
     end
   end
@@ -1330,10 +1511,10 @@ end
 
 --- Set the place by hand. `input` is a route key ("route-104", "starter", "place:<text>") or free
 --- text typed by the user (becomes "place:<text>"); nil/"" clears the place. `name` is optional
---- display text, `zone` the zone the player is in right now (nil when the core reports none): the
---- manual place wins until the zone changes. Returns the new state and a place fact (nil when
---- nothing changed).
-function D.set_place(prev, input, name, zone)
+--- display text, `zone` / `loc` the zone and location id the player is in right now (nil when the
+--- core reports none): the manual place wins until that anchor changes. Returns the new state and
+--- a place fact (nil when nothing changed).
+function D.set_place(prev, input, name, zone, loc)
   local st = state.ensure(util.copy(prev))
   local old = st.place or { manual = false }
   local key
@@ -1341,16 +1522,40 @@ function D.set_place(prev, input, name, zone)
     key = oras.is_key(input) and input or oras.custom_key(input)
   end
   zone = zone_id(zone) or (old.manual and old.zone) or nil
-  st.place = { key = key, name = name, zone = zone, manual = true }
+  loc = zone_id(loc) or (old.manual and old.loc) or nil
+  st.place = { key = key, name = name, zone = zone, loc = loc, manual = true }
   if key == old.key and name == old.name and old.manual then return st, nil end
   return st, { kind = "place", key = key, name = name, manual = true, previous = old.key }
 end
 
-local function handle_encounter(st, cfg, pk, foe, horde, facts, family)
+-- Pairs-differ-primary-type clause: the creature's primary type is already taken by a partner's
+-- creature on that route. Needs opts.types(species, form) and opts.partner_types(route).
+local function type_clash(cfg, opts, route, species, form)
+  if not cfg.rules.pairs_differ_primary_type or not route or not opts.types or not opts.partner_types then
+    return false, nil
+  end
+  local ty = opts.types(species, form)
+  if ty == nil then return false, nil end
+  local taken = opts.partner_types(route)
+  return type(taken) == "table" and taken[ty] == true, ty
+end
+
+-- The route a wild encounter belongs to: a manual place, else the area of the encounter's location
+-- (core v0.3), else the current place.
+local function encounter_route(st, e, opts)
+  if st.place.manual and st.place.key then return st.place.key end
+  local lid = zone_id(e.location)
+  if lid ~= nil and opts.areas and opts.areas.set[lid] then return oras.area_key(lid) end
+  return st.place.key
+end
+
+local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
   local fact = { kind = "encounter", route = pk, species = foe.species, form = foe.form,
                  shiny = foe.shiny == true, horde = horde, counts = false }
+  fact.species_name = note_species(st, opts, foe.species, foe.species_name)
   local r = cfg.rules
   local existing = pk and st.routes[pk]
+  local clash = type_clash(cfg, opts, pk, foe.species, foe.form)
   if horde and not r.hordes_count then
     fact.why = "horde"
   elseif pk == nil then
@@ -1359,6 +1564,8 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family)
     fact.why = "shiny"
   elseif r.dupes_clause and owns_line(st, foe.species, family) then
     fact.why = "dupe"
+  elseif clash then
+    fact.why = "type"
   elseif existing and r.first_encounter_only then
     fact.why = "used"
   else
@@ -1370,20 +1577,23 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family)
   facts[#facts + 1] = fact
 end
 
-local function handle_catch(st, cfg, c, pk, starter, facts, family)
+local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
   local rec, r = c.rec, cfg.rules
   local dupe = r.dupes_clause and owns_line(st, rec.species, family) -- before the mon is added
+  local clash, ty = type_clash(cfg, opts, pk, rec.species, rec.form)
   local mon = {
     species = rec.species, form = rec.form, nickname = util.clean_text(rec.nickname, 24),
     level = rec.level, shiny = rec.shiny == true or nil, route = pk, where = c.where,
     hp = type(rec.hp) == "number" and rec.hp or nil,
-    mhp = type(rec.max_hp) == "number" and rec.max_hp or nil,
+    mhp = type(rec.max_hp) == "number" and rec.max_hp or nil, ty = ty,
   }
+  if r.pairs_differ_primary_type and ty == nil and opts.types then mon.ty = opts.types(rec.species, rec.form) end
   if rec.nicknamed == false then mon.nicknamed = false end
   st.mons[c.pid] = mon
   local fact = { kind = "catch", mon = c.pid, species = rec.species, form = rec.form,
                  nickname = mon.nickname, level = rec.level, shiny = rec.shiny == true,
                  route = pk, where = c.where, counts = false, starter = starter or nil }
+  fact.species_name = note_species(st, opts, rec.species, rec.species_name)
   local existing = pk and st.routes[pk]
   if rec.egg then
     mon.gift, mon.why = true, "gift"
@@ -1394,6 +1604,8 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family)
     mon.why, fact.why = "shiny", "shiny"
   elseif dupe then
     mon.why, fact.why = "dupe", "dupe"
+  elseif clash and not starter then
+    mon.why, fact.why = "type", "type"
   else
     local entry = { status = "caught", mon = c.pid, species = rec.species,
                     kind = starter and "starter" or "wild" }
@@ -1410,12 +1622,36 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family)
   facts[#facts + 1] = fact
 end
 
+-- The route with the one pending encounter (a battle that has not ended in a catch or a miss), or nil.
+local function pending_route(st)
+  local found
+  for key, e in pairs(st.routes) do
+    if e.status == "encounter" then
+      if found then return nil end
+      found = key
+    end
+  end
+  return found
+end
+
+local function newest_seq(list)
+  local max = 0
+  for _, e in ipairs(list) do if e.seq > max then max = e.seq end end
+  return max
+end
+
 --- diff(prev, snap, cfg, opts) -> new_state, facts
 ---   prev  own state (nil = fresh); never modified
 ---   snap  see the snapshot description above
 ---   cfg   result of rules.parse (or flat rule flags)
 ---   opts  { family = function(species) -> family id (default: species itself),
----           zones = zone -> route key table (default data.oras.ZONES),
+---           zones = zone -> route key table (fallback without a location id, default data.oras.ZONES),
+---           areas = { set = { [location id] = true }, order = { location id, ... }, names = { [id] = name } }
+---                   (pokemon-core areas(); nil while not ready),
+---           areas_unsupported = bool (the core has no areas(): the zone table is the fallback),
+---           names = { species = function(id) -> name|nil },   display names read from the game
+---           types = function(species, form) -> primary type id|nil,
+---           partner_types = function(route key) -> { [type id] = true } of the partners' creatures there,
 ---           first = "auto"|"baseline"|"starter" (what the first complete snapshot means),
 ---           game = { id, language } }
 --- Tracking starts with the first snapshot where team and boxes are both known: then either
@@ -1432,8 +1668,16 @@ function D.diff(prev, snap, cfg, opts)
     st.game.id = st.game.id or opts.game.id
     st.game.language = st.game.language or opts.game.language
   end
+  if opts.areas and type(opts.areas.order) == "table" then
+    local o, same = opts.areas.order, type(st.areas) == "table" and #st.areas == math.min(#opts.areas.order, state.MAX_AREAS)
+    if same then for i, id in ipairs(st.areas) do if o[i] ~= id then same = false; break end end end
+    if not same then
+      st.areas = {}
+      for i = 1, math.min(#o, state.MAX_AREAS) do st.areas[i] = o[i] end
+    end
+  end
 
-  update_place(st, snap.location, facts, opts.zones or oras.ZONES)
+  update_place(st, snap.location, facts, opts)
   local b = badge_count(snap.badges)
   if b then st.badges = b end
 
@@ -1441,12 +1685,27 @@ function D.diff(prev, snap, cfg, opts)
   local bat = battle_info(snap)
   local catch_place
 
+  -- encounters() with seq: only entries newer than the last handled one count
+  local enc = {}
+  local seq_mode = false
+  if type(snap.encounters) == "table" then
+    local first = snap.encounters[1]
+    seq_mode = first == nil or (type(first) == "table" and math.type(first.seq) == "integer")
+    if seq_mode then
+      for _, e in ipairs(snap.encounters) do
+        if type(e) == "table" and math.type(e.seq) == "integer" then enc[#enc + 1] = e end
+      end
+      table.sort(enc, function(x, y) return x.seq < y.seq end)
+    end
+  end
+
   if not st.started then
     if not (team_known and boxes_known) then return st, facts end
     local first = opts.first or "auto"
     local starter = first == "starter"
       or (first == "auto" and #list == 1 and list[1].where == "team" and not list[1].rec.egg)
     st.started = true
+    if seq_mode then st.enc_seq = newest_seq(enc) end -- encounters before the tracking started are old
     if not starter then
       for _, c in ipairs(list) do st.baseline[c.pid] = true end
       st.inb = bat.known and bat.active or false
@@ -1463,8 +1722,10 @@ function D.diff(prev, snap, cfg, opts)
       m.miss = nil
       if m.species ~= rec.species then
         facts[#facts + 1] = { kind = "evolve", mon = pid, from = m.species, to = rec.species,
-                              nickname = m.nickname, route = m.route }
+                              nickname = m.nickname, route = m.route,
+                              species_name = note_species(st, opts, rec.species, rec.species_name) }
         m.species = rec.species
+        if m.ty ~= nil and opts.types then m.ty = opts.types(rec.species, rec.form) or m.ty end
       end
       m.form = rec.form
       m.level = rec.level or m.level
@@ -1475,13 +1736,25 @@ function D.diff(prev, snap, cfg, opts)
         facts[#facts + 1] = { kind = "moved", mon = pid, from = m.where, to = c.where }
         m.where = c.where
       end
-      if type(rec.hp) == "number" then
-        if m.hp and m.hp > 0 and rec.hp <= 0 then
+      -- fainted: live team hp reaches 0, or the battle reports it for the own battler first
+      -- (m.fz: counted from the battle, the team record has not caught up yet)
+      local team_hp = type(rec.hp) == "number" and rec.hp or nil
+      local own_zero = bat.own[pid] ~= nil and bat.own[pid] <= 0
+      if own_zero or (team_hp and team_hp <= 0) then
+        if m.hp and m.hp > 0 and not m.fz then
           m.deaths = (m.deaths or 0) + 1
           facts[#facts + 1] = { kind = "death", mon = pid, species = m.species, nickname = m.nickname,
-                                route = m.route, deaths = m.deaths }
+                                route = m.route, deaths = m.deaths,
+                                species_name = note_species(st, opts, m.species, rec.species_name) }
         end
-        m.hp = rec.hp
+        m.hp = 0
+        m.fz = (own_zero and not (team_hp and team_hp <= 0)) or nil
+      elseif team_hp then
+        if m.fz and bat.known and bat.active then
+          m.hp = 0 -- stale party data during the battle
+        else
+          m.hp, m.fz = team_hp, nil
+        end
       end
       if type(rec.max_hp) == "number" then m.mhp = rec.max_hp end
     elseif team_known and boxes_known and m.where ~= "gone" then
@@ -1493,10 +1766,10 @@ function D.diff(prev, snap, cfg, opts)
     end
   end
 
-  -- new mons
+  -- new mons: a catch lands on the pending encounter's route, else on the current place
   for _, c in ipairs(list) do
     if not st.baseline[c.pid] and not st.mons[c.pid] then
-      handle_catch(st, cfg, c, catch_place or st.place.key, catch_place ~= nil, facts, family)
+      handle_catch(st, cfg, c, catch_place or pending_route(st) or st.place.key, catch_place ~= nil, facts, family, opts)
     end
   end
 
@@ -1509,9 +1782,21 @@ function D.diff(prev, snap, cfg, opts)
   end
 
   -- encounters and missed routes
+  if seq_mode then
+    if st.enc_seq == nil then
+      st.enc_seq = newest_seq(enc)
+    else
+      for _, e in ipairs(enc) do
+        if e.seq > st.enc_seq then
+          st.enc_seq = e.seq
+          handle_encounter(st, cfg, encounter_route(st, e, opts), e, e.horde == true, facts, family, opts)
+        end
+      end
+    end
+  end
   if bat.known then
-    if bat.active and not st.inb and bat.wild then
-      handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family)
+    if not seq_mode and bat.active and not st.inb and bat.wild then
+      handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family, opts)
     elseif not bat.active and st.inb then
       for _, key in ipairs(util.keys(st.routes)) do
         local e = st.routes[key]
@@ -1522,10 +1807,10 @@ function D.diff(prev, snap, cfg, opts)
       end
     end
     st.inb = bat.active
-  elseif type(snap.encounters) == "table" then
+  elseif not seq_mode and type(snap.encounters) == "table" then
     for _, e in ipairs(snap.encounters) do
       if type(e) == "table" then
-        handle_encounter(st, cfg, st.place.key, e, e.horde == true, facts, family)
+        handle_encounter(st, cfg, st.place.key, e, e.horde == true, facts, family, opts)
       end
     end
   end
@@ -1557,9 +1842,9 @@ local function put(t, k, v) if v ~= nil then t[k] = v end end
 
 --- Build the event spec for a detection fact, or nil for facts without an event
 --- (evolve, moved). `user` is the user id of the own participant.
----   catch     payload { user, mon, species, form?, nickname?, level?, shiny?, route?, counts, why?, gift?, starter?, where }
----   death     payload { user, mon, species, nickname?, route?, deaths }
----   encounter payload { user, outcome = "seen"|"missed", route?, species?, form?, shiny?, horde?, counts, why? }
+---   catch     payload { user, mon, species, species_name?, form?, nickname?, level?, shiny?, route?, counts, why?, gift?, starter?, where }
+---   death     payload { user, mon, species, species_name?, nickname?, route?, deaths }
+---   encounter payload { user, outcome = "seen"|"missed", route?, species?, species_name?, form?, shiny?, horde?, counts, why? }
 ---   place     payload { user, route?, name?, manual }
 function E.from_fact(fact, user)
   local k = fact.kind
@@ -1567,21 +1852,21 @@ function E.from_fact(fact, user)
   if k == "catch" then
     p.mon, p.species, p.counts, p.where = fact.mon, fact.species, fact.counts, fact.where
     put(p, "form", fact.form); put(p, "nickname", fact.nickname); put(p, "level", fact.level)
-    put(p, "route", fact.route); put(p, "why", fact.why)
+    put(p, "route", fact.route); put(p, "why", fact.why); put(p, "species_name", fact.species_name)
     if fact.shiny then p.shiny = true end
     if fact.gift then p.gift = true end
     if fact.starter then p.starter = true end
     return { type = E.TYPES.catch, payload = p, source = "automatic" }
   elseif k == "death" then
     p.mon, p.species, p.deaths = fact.mon, fact.species, fact.deaths
-    put(p, "nickname", fact.nickname); put(p, "route", fact.route)
+    put(p, "nickname", fact.nickname); put(p, "route", fact.route); put(p, "species_name", fact.species_name)
     return { type = E.TYPES.death, payload = p, source = "automatic" }
   elseif k == "encounter" or k == "missed" then
     p.outcome = k == "missed" and "missed" or "seen"
     if k == "missed" then p.counts = false else p.counts = fact.counts end
     put(p, "route", fact.route); put(p, "species", fact.species)
     if k == "encounter" then
-      put(p, "form", fact.form); put(p, "why", fact.why)
+      put(p, "form", fact.form); put(p, "why", fact.why); put(p, "species_name", fact.species_name)
       if fact.shiny then p.shiny = true end
       if fact.horde then p.horde = true end
     end
@@ -1713,6 +1998,8 @@ __mod["model.snapshot"] = function(...)
 -- Builds the detection snapshot from the `pokemon.core` interface.
 -- Every method may be missing (nil, "unsupported") or not ready (nil, "not_ready"); a missing
 -- part stays nil in the snapshot ("unknown"), which detect.diff handles without inventing data.
+-- Shapes follow pokemon.core v0.3 (location {zone, location, name}, battle {active, kind, horde, foes, own},
+-- encounters [{seq, species, form, shiny, horde, zone, location}], badges {count, flags}).
 local P = {}
 
 P.INTERFACE = "pokemon.core"
@@ -1766,6 +2053,13 @@ function P.collect(call, opts)
   end
   part("location", "location")
   part("battle", "battle")
+  -- core v0.3: kind = "wild" | "trainer" | nil; the detection reads `wild`
+  if type(snap.battle) == "table" and snap.battle.wild == nil then
+    local b = {}
+    for k, v in pairs(snap.battle) do b[k] = v end
+    b.wild = b.kind == "wild"
+    snap.battle = b
+  end
   part("encounters", "encounters")
   part("badges", "badges")
   return snap, issues
@@ -1788,6 +2082,9 @@ local S = {}
 S.VERSION = 1
 --- Soft limit well below the 64 KiB platform limit; guard() compacts above it.
 S.MAX_BYTES = 48 * 1024
+S.MAX_NAMES = { sp = 400, loc = 200 }  -- entries per name table
+S.NAME_LEN = { sp = 24, loc = 32 }     -- characters per name
+S.MAX_AREAS = 400
 
 --- Fresh state. `game` = { id = ..., language = ... } (both optional).
 ---
@@ -1802,17 +2099,24 @@ S.MAX_BYTES = 48 * 1024
 ---   routes = { [route key] = { status = "encounter"|"caught"|"missed", mon?, species?, kind? } }
 ---   order  = { "<hex8>", ... }   tracked mons in team order
 ---   badges = number
+---   names  = { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } }   display names read from
+---            the game when a catch / encounter / place was recorded (short, one entry per id), so other
+---            players and the Hub show names without a running game
+---   areas  = { <location id>, ... }   encounter areas in game order (pokemon-core areas()), for ordering
+---   enc_seq = n   last handled pokemon-core encounters() seq
+---   mons[..].fz = true   death already counted from the battle (until the team record agrees)
+---   mons[..].ty = n   primary type id (only with the rule pairs_differ_primary_type)
 function S.new(game)
   local g = {}
   if type(game) == "table" then
     g.id = game.id
     g.language = game.language
   end
-  return {
+  return S.ensure({
     v = S.VERSION, started = false, inb = false,
     game = g, place = { manual = false },
     baseline = {}, mons = {}, routes = {}, order = {}, badges = 0,
-  }
+  })
 end
 
 --- Complete a state received from the Hub (nil or older shape) so the model can use it.
@@ -1826,7 +2130,29 @@ function S.ensure(st)
   st.routes = st.routes or {}
   st.order = st.order or {}
   st.badges = st.badges or 0
+  st.names = type(st.names) == "table" and st.names or {}
+  st.names.sp = type(st.names.sp) == "table" and st.names.sp or {}
+  st.names.loc = type(st.names.loc) == "table" and st.names.loc or {}
   return st
+end
+
+--- Remember a display name read from the game: kind "sp" (species id) or "loc" (location id).
+--- Short, deduplicated per id, limited in count. Returns true when the table changed.
+function S.note_name(st, kind, id, name)
+  if math.type(id) == "float" then id = math.tointeger(id) end
+  if math.type(id) ~= "integer" or type(name) ~= "string" then return false end
+  name = util.clean_text(name, S.NAME_LEN[kind])
+  if not name then return false end
+  S.ensure(st)
+  local t, k = st.names[kind], tostring(id)
+  if t[k] == name then return false end
+  if t[k] == nil then
+    local n = 0
+    for _ in pairs(t) do n = n + 1 end
+    if n >= S.MAX_NAMES[kind] then return false end
+  end
+  t[k] = name
+  return true
 end
 
 --- Death count of a tracked mon (absent = 0).
@@ -1842,6 +2168,20 @@ function S.compact(st)
   for _, r in pairs(st.routes) do if r.mon then referenced[r.mon] = true end end
   for pid, m in pairs(st.mons) do
     if m.where == "gone" and not referenced[pid] and (m.deaths or 0) == 0 then st.mons[pid] = nil end
+  end
+  if S.size(st) > S.MAX_BYTES then
+    -- names nothing refers to
+    local sp, loc = {}, {}
+    for _, m in pairs(st.mons) do sp[tostring(m.species)] = true end
+    for key, r in pairs(st.routes) do
+      sp[tostring(r.species or "")] = true
+      local id = key:match("^loc:(%d+)$")
+      if id then loc[id] = true end
+    end
+    local pid = st.place and st.place.loc
+    if pid then loc[tostring(pid)] = true end
+    for k in pairs(st.names.sp) do if not sp[k] then st.names.sp[k] = nil end end
+    for k in pairs(st.names.loc) do if not loc[k] then st.names.loc[k] = nil end end
   end
   if S.size(st) > S.MAX_BYTES then
     for _, m in pairs(st.mons) do
@@ -2013,7 +2353,7 @@ end
 
 local function new_vmon(owner, id, m)
   return {
-    id = id, owner = owner, species = m.species, form = m.form, nickname = m.nickname,
+    id = id, owner = owner, species = m.species, form = m.form, nickname = m.nickname, ty = m.ty,
     nicknamed = m.nicknamed, level = m.level, shiny = m.shiny == true, own_route = m.route,
     where = m.where or "box", hp = m.hp, mhp = m.mhp, base_gift = m.gift == true, why = m.why,
     deaths = m.deaths or 0, manual = 0, undone = 0, virtual = false,
@@ -2173,6 +2513,47 @@ function V.merge_zones(run, states)
   return out
 end
 
+local function ids_me_first(run, states)
+  local ids = {}
+  for id in pairs(states or {}) do if id ~= run.me then ids[#ids + 1] = id end end
+  table.sort(ids)
+  table.insert(ids, 1, run.me or "")
+  return ids
+end
+
+--- Display names stored in the participants' states (own first; the first name per id wins):
+--- { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } }.
+function V.merge_names(run, states)
+  local out = { sp = {}, loc = {} }
+  for _, id in ipairs(ids_me_first(run, states)) do
+    local nm = states and states[id] and states[id].names
+    if type(nm) == "table" then
+      for kind, dst in pairs(out) do
+        if type(nm[kind]) == "table" then
+          for k, v in pairs(nm[kind]) do
+            if type(v) == "string" and v ~= "" and dst[k] == nil then dst[k] = v end
+          end
+        end
+      end
+    end
+  end
+  return out
+end
+
+--- Encounter areas in game order (location ids): the own list, then ids only others know.
+function V.merge_areas(run, states)
+  local out, seen = {}, {}
+  for _, id in ipairs(ids_me_first(run, states)) do
+    local a = states and states[id] and states[id].areas
+    if type(a) == "table" then
+      for _, lid in ipairs(a) do
+        if math.type(lid) == "integer" and not seen[lid] then seen[lid] = true; out[#out + 1] = lid end
+      end
+    end
+  end
+  return out
+end
+
 function V.view(run, states, events, cfg)
   run, states = run or {}, states or {}
   cfg = cfg and rules.normalize(cfg) or rules.parse(run)
@@ -2191,6 +2572,12 @@ function V.view(run, states, events, cfg)
   local pindex = {}
   for i, pl in ipairs(players) do pindex[pl.id] = i end
 
+  local names = V.merge_names(run, states)
+  local areas = V.merge_areas(run, states)
+  local order = {}
+  for i, lid in ipairs(areas) do order[oras.area_key(lid)] = i end
+  local function sname(species) return names.sp[tostring(species)] end
+
   local catch_seq, death_seq, effective, invalid = collect_events(events)
   local pv = build_players(players, states, effective, catch_seq, death_seq)
   assign_slots(players, pv)
@@ -2205,7 +2592,7 @@ function V.view(run, states, events, cfg)
     if w.st.place.key then route_set[w.st.place.key] = true end
   end
   local route_keys = util.keys(route_set)
-  table.sort(route_keys, oras.compare)
+  table.sort(route_keys, function(a, b) return oras.compare(a, b, order) end)
 
   -- groups
   local groups, group_of = {}, {}
@@ -2277,7 +2664,7 @@ function V.view(run, states, events, cfg)
   table.sort(numbered, function(a, b)
     local sa, sb = a.completed_seq or INF, b.completed_seq or INF
     if sa ~= sb then return sa < sb end
-    return oras.compare(a.route, b.route)
+    return oras.compare(a.route, b.route, order)
   end)
   for i, g in ipairs(numbered) do g.number = i end
 
@@ -2289,7 +2676,8 @@ function V.view(run, states, events, cfg)
     if not vm.dead and own_dead(vm) then vm.dead, vm.cause = true, "own" end
     local g = vm.slot and group_of[vm.slot]
     return {
-      id = vm.id, owner = vm.owner, species = vm.species, form = vm.form, nickname = vm.nickname,
+      id = vm.id, owner = vm.owner, species = vm.species, species_name = sname(vm.species), form = vm.form,
+      nickname = vm.nickname, ty = vm.ty,
       nicknamed = vm.nicknamed, level = vm.level, shiny = vm.shiny, hp = vm.hp, mhp = vm.mhp,
       route = vm.slot or vm.own_route, where = vm.where, dead = vm.dead == true, cause = vm.cause,
       doa = vm.doa == true, deaths = eff_deaths(vm), gift = is_gift(vm), why = vm.why,
@@ -2317,7 +2705,8 @@ function V.view(run, states, events, cfg)
       if mv.dead then
         dead = dead + 1
         graveyard[#graveyard + 1] = {
-          owner = pl.id, mon = id, species = mv.species, form = mv.form, nickname = mv.nickname,
+          owner = pl.id, mon = id, species = mv.species, species_name = mv.species_name, form = mv.form,
+          nickname = mv.nickname,
           route = mv.route, group = mv.group, group_number = mv.group_number, cause = mv.cause,
           doa = mv.doa, deaths = mv.deaths, shiny = mv.shiny,
           seq = mv.cause == "own" and (death_seq[mkey(pl.id, id)] or {})[mv.deaths]
@@ -2330,7 +2719,8 @@ function V.view(run, states, events, cfg)
     end
     stats.alive = stats.alive + alive
     local place = w.st.place
-    local place_view = { key = place.key, name = place.name, zone = place.zone, manual = place.manual == true }
+    local place_view = { key = place.key, name = place.name, zone = place.zone, loc = place.loc,
+                         manual = place.manual == true }
     local badges = w.st.badges or 0
     if badges > stats.badges_max then stats.badges_max = badges end
     out_players[i] = {
@@ -2362,22 +2752,27 @@ function V.view(run, states, events, cfg)
       if vm then
         local mv = out_players[pindex[pl.id]].mons[vm.id]
         cell.mon, cell.species, cell.nickname, cell.gift = vm.id, mv.species, mv.nickname, mv.gift
+        cell.species_name = mv.species_name
         if mv.dead then cell.state, cell.cause = "dead", mv.cause end
       elseif e then
         cell.species = e.species
+        cell.species_name = sname(e.species)
       end
       if st_ == "open" or st_ == "encounter" then done = false end
       cells[pl.id] = cell
     end
     local g = group_of[r]
-    rows[#rows + 1] = { route = r, order = oras.order_index(r), cells = cells, group = g and {
+    rows[#rows + 1] = { route = r, order = oras.order_index(r, order), cells = cells, group = g and {
       route = g.route, state = g.state, number = g.number, complete = g.complete, count = g.count,
     } or nil, done = done }
     if done then stats.routes_done = stats.routes_done + 1 end
   end
-  stats.routes_total = #oras.ROUTE_KEYS + 1
+  -- starter + every area of the game + free places and legacy routes that have activity
+  stats.routes_total = 1 + #areas
   for _, r in ipairs(route_keys) do
-    if r:sub(1, 6) == "place:" then stats.routes_total = stats.routes_total + 1 end
+    if r:sub(1, 6) == "place:" or oras.route_number(r) or (oras.area_id(r) and not order[r]) then
+      stats.routes_total = stats.routes_total + 1
+    end
   end
 
   -- place status per player (location card)
@@ -2400,7 +2795,7 @@ function V.view(run, states, events, cfg)
   for _, g in ipairs(groups) do
     local members = {}
     for _, vm in ipairs(g.mons) do
-      members[#members + 1] = { owner = vm.owner, id = vm.id, species = vm.species,
+      members[#members + 1] = { owner = vm.owner, id = vm.id, species = vm.species, species_name = sname(vm.species),
         nickname = vm.nickname, deaths = eff_deaths(vm), dead = vm.dead == true, cause = vm.cause,
         doa = vm.doa == true }
     end
@@ -2412,7 +2807,7 @@ function V.view(run, states, events, cfg)
   table.sort(group_views, function(a, b)
     local na, nb = a.number or INF, b.number or INF
     if na ~= nb then return na < nb end
-    return oras.compare(a.route, b.route)
+    return oras.compare(a.route, b.route, order)
   end)
 
   -- hints
@@ -2446,7 +2841,24 @@ function V.view(run, states, events, cfg)
     end
   end
 
+  -- hints: same primary type inside a link group (rule pairs_differ_primary_type, never blocking)
+  if soul and r.pairs_differ_primary_type then
+    for _, g in ipairs(groups) do
+      if g.propagates then
+        local count = {}
+        for _, vm in ipairs(g.mons) do if vm.ty ~= nil then count[vm.ty] = (count[vm.ty] or 0) + 1 end end
+        for _, vm in ipairs(g.mons) do
+          if vm.ty ~= nil and count[vm.ty] > 1 and not own_dead(vm) then
+            hints[#hints + 1] = { code = "type_clash", user = vm.owner, mon = vm.id, route = g.route,
+                                  player_index = pindex[vm.owner] }
+          end
+        end
+      end
+    end
+  end
+
   return {
+    names = names, areas = areas, order = order,
     mode = cfg.mode, rules = cfg.rules, players = out_players, rows = rows, groups = group_views,
     graveyard = graveyard, stats = stats, hints = hints, invalid_corrections = invalid,
     zones = V.merge_zones(run, states),
@@ -2459,7 +2871,6 @@ end
 __mod["ui.board"] = function(...)
 -- Hub run board (design 5gh): compact read-only tree for fb.run.setBoard.
 local common = require("ui.common")
-local oras = require("data.oras")
 
 local M = {}
 
@@ -2471,7 +2882,7 @@ function M.build(ctx)
   local players = {}
   for i, p in ipairs(view.players) do
     players[#players + 1] = { id = "bp" .. i, title = p.name,
-      sub = tr("board_player_sub", { place = common.place_label(p.place, tr), alive = p.alive, dead = p.dead, badges = p.badges }),
+      sub = tr("board_player_sub", { place = common.place_label(p.place, tr, view), alive = p.alive, dead = p.dead, badges = p.badges }),
       tone = nil }
   end
   local columns = { tr("col_route") }
@@ -2480,7 +2891,7 @@ function M.build(ctx)
   local rows = {}
   for _, r in ipairs(view.rows) do
     if #rows < M.MAX_ROUTE_ROWS then
-      local cells = { oras.label(r.route, tr) }
+      local cells = { common.route_label(ctx, r.route) }
       for _, p in ipairs(view.players) do cells[#cells + 1] = common.cell_text(r.cells[p.id], tr) end
       cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or common.group_state_text(r.group, tr)
       rows[#rows + 1] = { cells = cells }
@@ -2490,7 +2901,7 @@ function M.build(ctx)
   for i, g in ipairs(view.graveyard) do
     if i <= M.MAX_GRAVE_ROWS then
       grave[#grave + 1] = { id = "bg" .. i, title = "✕ " .. common.mon_name(g),
-        sub = tr("grave_sub", { route = g.route and oras.label(g.route, tr) or "?", player = common.name_of(view, g.owner) }), tone = "neutral" }
+        sub = tr("grave_sub", { route = g.route and common.route_label(ctx, g.route) or "?", player = common.name_of(view, g.owner) }), tone = "neutral" }
     end
   end
   local kids = {
@@ -2521,13 +2932,62 @@ __mod["ui.common"] = function(...)
 --   ctx = { view, run, me, ui, tr, readonly, now, events }
 -- and return fb.ui block trees. Only tones, sizes and player numbers are used, never colors.
 local oras = require("data.oras")
+local util = require("model.util")
 
 local C = {}
 
---- Display name of a mon: its nickname, else "#<species id>" until the core provides names.
+--- Species name read from the game (stored in the run state), else "#<species id>".
+function C.species_label(m)
+  if m and type(m.species_name) == "string" and m.species_name ~= "" then return m.species_name end
+  return "#" .. tostring(m and m.species or "?")
+end
+
+--- Display name of a mon: its nickname, else the species name.
 function C.mon_name(m)
   if m and type(m.nickname) == "string" and m.nickname ~= "" then return m.nickname end
-  return "#" .. tostring(m and m.species or "?")
+  return C.species_label(m)
+end
+
+--- Label of a route / area key: live name from the game (ctx.area_name), else the stored name,
+--- else "Area <id>" / "Route <n>" / the typed text.
+function C.route_label(ctx, key)
+  local id = oras.area_id(key)
+  if id and ctx.area_name then
+    local nm = ctx.area_name(id)
+    if nm then return nm end
+  end
+  return oras.label(key, ctx.tr, ctx.view and ctx.view.names)
+end
+
+--- Text cut to `n` characters (HUD and tile strip have small size limits).
+function C.short(text, n)
+  return util.clean_text(text, n) or ""
+end
+
+--- Options for a route select (at most 100): optional "no group" entry, the starter, the game's
+--- areas in game order, then keys with activity that are not areas (free places, legacy routes) and
+--- the selected key. Areas at the end are dropped first when the list is too long.
+function C.route_options(ctx, none_label, selected)
+  local view = ctx.view
+  local head, tail, seen = {}, {}, {}
+  if none_label then head[#head + 1] = { value = "none", label = none_label }; seen.none = true end
+  local function add(list, key)
+    if key and not seen[key] then
+      seen[key] = true
+      list[#list + 1] = { value = key, label = C.route_label(ctx, key) }
+    end
+  end
+  add(head, oras.STARTER)
+  local areas = {}
+  for _, id in ipairs(view.areas or {}) do add(areas, oras.area_key(id)) end
+  for _, r in ipairs(view.rows) do add(tail, r.route) end
+  add(tail, selected)
+  local room = 100 - #head - #tail
+  local out = {}
+  for _, o in ipairs(head) do out[#out + 1] = o end
+  for i = 1, math.min(#areas, math.max(room, 0)) do out[#out + 1] = areas[i] end
+  for _, o in ipairs(tail) do if #out < 100 then out[#out + 1] = o end end
+  return out
 end
 
 --- `cache:` src of the creature icon (pokemon-core icon, fetched lazily by the controller), or nil.
@@ -2584,9 +3044,10 @@ function C.row_of(view, route)
 end
 
 --- Place text: name read from the game if the core reported it, else the route label.
-function C.place_label(place, tr)
+--- `view` (optional) supplies the stored area names.
+function C.place_label(place, tr, view)
   if place.name and place.name ~= "" then return place.name end
-  if place.key then return oras.label(place.key, tr) end
+  if place.key then return oras.label(place.key, tr, view and view.names) end
   return tr("place_none")
 end
 
@@ -2600,9 +3061,9 @@ function C.status_tone(status) return TONE[status] or "neutral" end
 --- Short text of a cell of the routes matrix.
 function C.cell_text(cell, tr)
   if cell.state == "open" then return tr("cell_open") end
-  if cell.state == "encounter" then return tr("cell_encounter", { mon = "#" .. tostring(cell.species or "?") }) end
+  if cell.state == "encounter" then return tr("cell_encounter", { mon = C.species_label(cell) }) end
   if cell.state == "missed" then return tr("cell_missed") end
-  local name = (cell.nickname and cell.nickname ~= "") and cell.nickname or ("#" .. tostring(cell.species or "?"))
+  local name = C.mon_name(cell)
   if cell.state == "dead" then return "✕ " .. name end
   return name
 end
@@ -2651,18 +3112,9 @@ __mod["ui.corrections"] = function(...)
 -- nickname?, level?, state?, gift?, target?, note?, error? }; fields change through the actions
 -- "cf:<field>", "corr_submit" posts the event, "corr_cancel" closes the form.
 local common = require("ui.common")
-local oras = require("data.oras")
 local corrections = require("model.corrections")
 
 local M = {}
-
-local function route_options(tr, with_none)
-  local opts = {}
-  if with_none then opts[#opts + 1] = { value = "none", label = tr("c_group_none") } end
-  opts[#opts + 1] = { value = oras.STARTER, label = oras.label(oras.STARTER, tr) }
-  for _, k in ipairs(oras.ROUTE_KEYS) do opts[#opts + 1] = { value = k, label = oras.label(k, tr) } end
-  return opts
-end
 
 --- Build the corrections payload spec from the form; returns spec or nil, error key.
 function M.to_spec(corr)
@@ -2717,7 +3169,7 @@ function M.section(ctx)
   local kids = {}
   local function add(b) kids[#kids + 1] = b end
   local k = corr.kind
-  local route_label = corr.route and oras.label(corr.route, tr) or ""
+  local route_label = corr.route and common.route_label(ctx, corr.route) or ""
   local others = common.others_names(view, ctx.me)
 
   if k == "doesnt_count" then
@@ -2734,12 +3186,13 @@ function M.section(ctx)
     add({ type = "textfield", id = "c-note", action = "cf:note", text = corr.note or "", placeholder = tr("c_reason_placeholder") })
   elseif k == "set_group" then
     add({ type = "text", id = "c-text", text = tr("c_group_text"), style = "meta" })
-    local opts = route_options(tr, true)
+    local opts = common.route_options(ctx, tr("c_group_none"), corr.group)
     add({ type = "select", id = "c-group", action = "cf:group", options = opts, selected = corr.group or "none" })
   elseif k == "add" then
     add({ type = "text", id = "c-text", text = tr("c_add_text"), style = "meta" })
-    add({ type = "select", id = "c-route", action = "cf:route", options = route_options(tr, false),
-      selected = corr.route or oras.ROUTE_KEYS[1] })
+    local opts = common.route_options(ctx, nil, corr.route)
+    add({ type = "select", id = "c-route", action = "cf:route", options = opts,
+      selected = corr.route or (opts[1] and opts[1].value) })
     add({ type = "textfield", id = "c-species", action = "cf:species", text = corr.species and tostring(corr.species) or "",
       placeholder = tr("c_species_placeholder") })
     add({ type = "textfield", id = "c-nick", action = "cf:nickname", text = corr.nickname or "", placeholder = tr("c_nick_placeholder") })
@@ -2790,7 +3243,7 @@ function M.build(ctx)
   local status = me.place.status
   local compact = { type = "row", id = "hud-row", gap = 8, align = "center", children = {
     { type = "badge", id = "hud-sl", text = "SL", tone = "info" },
-    { type = "text", id = "hud-place", text = common.place_label(me.place, tr), style = "body" },
+    { type = "text", id = "hud-place", text = common.short(common.place_label(me.place, tr, view), 24), style = "body" },
     { type = "text", id = "hud-status", text = dot(status) .. " " .. tr("hud_status_" .. status),
       tone = common.status_tone(status), style = "meta" },
   } }
@@ -2819,13 +3272,18 @@ return M
 
 end
 __mod["ui.panel"] = function(...)
--- In-game panel (design 5b): run header, location card with place picker, encounter hint,
--- own team with link partners, graveyard, footer. Pure builder: panel.build(ctx) -> block.
+-- In-game panel (design 5b), built for about 300 px: run header, location card, encounter hint,
+-- own team with link partners, graveyard (collapsed), footer. No tabs, no map, no stats, no filters:
+-- everything else lives on the run screen (ui.screen, opened with fb.ui.open("screen")).
+-- Pure builder: panel.build(ctx) -> block. ctx.can_open is false when the platform has no
+-- fb.ui.open; the panel then says so instead of showing the buttons that open the screen.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
-local oras = require("data.oras")
 
 local M = {}
+
+M.MAX_PARTNERS = 2   -- partner icons per team row
+M.MAX_GRAVE_ROWS = 10
 
 function M.empty(tr)
   return { type = "column", gap = 12, children = {
@@ -2835,14 +3293,15 @@ end
 
 local function header(ctx)
   local tr, run = ctx.tr, ctx.run
-  local kids = {
-    { type = "text", id = "h-eyebrow", text = tr("panel_eyebrow_" .. ctx.view.mode), style = "eyebrow" },
-    { type = "text", id = "h-name", text = run.name or "", style = "heading" },
-    { type = "button", id = "h-open", label = tr("open_run"), action = "open_run", variant = "quiet" },
-  }
-  if not common.writable(run) then
-    table.insert(kids, 3, { type = "badge", id = "h-ro", text = tr("run_readonly_" .. tostring(run.status)), tone = "warning" })
+  local row = { { type = "text", id = "h-name", text = run.name or "", style = "heading" } }
+  if ctx.can_open then
+    row[#row + 1] = { type = "button", id = "h-open", label = tr("open_run_link"), action = "open_run", variant = "quiet" }
   end
+  local kids = { { type = "text", id = "h-eyebrow", text = tr("panel_eyebrow_" .. ctx.view.mode), style = "eyebrow" } }
+  if not common.writable(run) then
+    kids[#kids + 1] = { type = "badge", id = "h-ro", text = tr("run_readonly_" .. tostring(run.status)), tone = "warning" }
+  end
+  kids[#kids + 1] = { type = "row", id = "h-row", gap = 8, align = "center", children = row }
   return { type = "column", id = "header", gap = 4, children = kids }
 end
 
@@ -2879,82 +3338,109 @@ local function location(ctx, me)
     sub = tr(sub_key)
   end
   local kids = others_on_place(ctx, me)
-  return { type = "location", id = "loc", title = common.place_label(me.place, tr), sub = sub,
+  return { type = "location", id = "loc", title = common.place_label(me.place, tr, ctx.view), sub = sub,
     status = common.loc_status(status), children = kids }
 end
 
---- The core reports a zone that no player has mapped to a route yet (and the player has not decided).
+--- The core reports a zone (but no location) that no player has mapped to a place yet.
 local function needs_zone(ctx, me)
   local z = me.place.zone
-  return z ~= nil and me.place.key == nil and not me.place.manual and ctx.view.zones[z] == nil
+  return z ~= nil and me.place.loc == nil and me.place.key == nil and not me.place.manual and ctx.view.zones[z] == nil
 end
 
-local function place_picker(ctx, me)
+local function picker_blocks(ctx, me)
   local tr = ctx.tr
-  local opts = { { value = oras.STARTER, label = oras.label(oras.STARTER, tr) } }
-  for _, k in ipairs(oras.ROUTE_KEYS) do opts[#opts + 1] = { value = k, label = oras.label(k, tr) } end
   local selected = me.place.key
-  local custom = selected and selected:match("^place:")
-  if custom then opts[#opts + 1] = { value = selected, label = oras.label(selected, tr) } end
-  local kids = {
-    { type = "select", id = "place-select", options = opts, selected = selected, action = "place_select" },
+  return {
+    { type = "select", id = "place-select", options = common.route_options(ctx, nil, selected), selected = selected,
+      action = "place_select" },
     { type = "textfield", id = "place-text", action = "place_text", placeholder = tr("place_other"), text = "" },
   }
+end
+
+--- Manual place: only when the core cannot report the location, collapsed behind "Set place".
+--- Unmapped zone without a location id: the card that asks which place this is (fallback).
+local function place_picker(ctx, me)
+  local tr = ctx.tr
   if ctx.readonly then return nil end
   if needs_zone(ctx, me) then
+    local kids = picker_blocks(ctx, me)
     kids[#kids + 1] = { type = "button", id = "zone-none", label = tr("zone_not_route"), action = "zone_none", variant = "quiet" }
     return { type = "card", id = "zone-new", title = tr("zone_new_title"), children = {
       { type = "text", id = "zone-new-text", text = tr("zone_new_text"), style = "meta" },
       { type = "column", id = "place-picker", gap = 4, children = kids } } }
   end
-  return { type = "column", id = "place-picker", gap = 4, children = kids }
+  if ctx.location_ok then return nil end
+  local open = ctx.ui.place_open == true
+  local kids = { { type = "button", id = "place-toggle", label = tr(open and "place_hide" or "place_set"),
+    action = "place_toggle", variant = "quiet" } }
+  if open then
+    kids[#kids + 1] = { type = "column", id = "place-picker", gap = 4, children = picker_blocks(ctx, me) }
+  end
+  return { type = "column", id = "place-set", gap = 4, children = kids }
 end
 
 local function encounter_hint(ctx, me)
   local tr = ctx.tr
   if me.place.status ~= "encounter" or ctx.readonly then return nil end
   local row = common.row_of(ctx.view, me.place.key)
-  local cell = row and row.cells[me.id]
+  local cell = row and row.cells[me.id] or {}
+  local text = { type = "text", id = "enc-text", text = tr("enc_text", { mon = common.species_label(cell) }), style = "meta" }
+  local icon = cell.species and common.icon_block(ctx, "enc-i", { species = cell.species, species_name = cell.species_name }, nil, "s")
+  local head = text
+  if icon then head = { type = "row", id = "enc-row", gap = 8, align = "center", children = { icon, text } } end
   return { type = "card", id = "enc", title = tr("enc_title"), children = {
-    { type = "text", id = "enc-text", text = tr("enc_text", { mon = "#" .. tostring(cell and cell.species or "?") }), style = "meta" },
+    head,
     { type = "button", id = "enc-no", label = tr("doesnt_count"), action = "dc_open", variant = "quiet" },
   } }
+end
+
+local function partners(ctx, me, i, m, groups)
+  local g = m.group and groups[m.group]
+  if not g or g.count <= 1 then return nil end
+  local kids, shown, more = {}, 0, 0
+  for j, pm in ipairs(g.members) do
+    if pm.owner ~= me.id then
+      if shown < M.MAX_PARTNERS then
+        shown = shown + 1
+        local idx, pl = common.index_of(ctx.view, pm.owner)
+        local color = common.color(pl or {}, idx)
+        local icon = common.icon_block(ctx, "m-p" .. i .. "-" .. j, pm, color, "s")
+        kids[#kids + 1] = icon or { type = "avatar", id = "m-p" .. i .. "-" .. j,
+          initial = common.initial(pl and pl.name), color = color, size = "s" }
+      else
+        more = more + 1
+      end
+    end
+  end
+  if more > 0 then
+    kids[#kids + 1] = { type = "text", id = "m-pm" .. i, text = "+" .. more, style = "meta" }
+  end
+  return { type = "row", id = "m-pr" .. i, gap = 4, align = "center", children = kids }
 end
 
 local function team(ctx, me)
   local tr = ctx.tr
   local groups = common.groups(ctx.view)
+  local owner = common.color(me, common.index_of(ctx.view, me.id))
   local kids = {}
   for i, m in ipairs(me.team) do
-    local title = common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
-    if m.dead then title = "✕ " .. title end
-    local head = { type = "text", id = "m-t" .. i, text = title, style = "body", tone = m.dead and "neutral" or nil }
-    local icon = common.icon_block(ctx, "m-i" .. i, m, common.color(me, common.index_of(ctx.view, me.id)), "s")
+    local title = (m.dead and "✕ " or "") .. common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
+    local texts = { { type = "text", id = "m-t" .. i, text = title, style = "body", tone = m.dead and "neutral" or nil } }
+    local has_nick = type(m.nickname) == "string" and m.nickname ~= ""
+    if has_nick then
+      texts[#texts + 1] = { type = "text", id = "m-s" .. i, text = common.species_label(m), style = "meta" }
+    end
+    local head = { type = "column", id = "m-c" .. i, gap = 0, children = texts }
+    local icon = common.icon_block(ctx, "m-i" .. i, m, owner, "s")
     if icon then head = { type = "row", id = "m-h" .. i, gap = 8, align = "center", children = { icon, head } } end
     local c = { head }
     local ratio = (not m.dead) and common.hp_ratio(m)
     if ratio then
       c[#c + 1] = { type = "bar", id = "m-hp" .. i, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) }
     end
-    local g = m.group and groups[m.group]
-    if g and g.count > 1 then
-      local partners = {}
-      for j, pm in ipairs(g.members) do
-        if pm.owner ~= me.id then
-          local idx, pl = common.index_of(ctx.view, pm.owner)
-          partners[#partners + 1] = { type = "avatar", id = "m-p" .. i .. "-" .. j,
-            initial = common.initial(pl and pl.name), color = common.color(pl or {}, idx), size = "s" }
-          partners[#partners + 1] = { type = "text", id = "m-pt" .. i .. "-" .. j,
-            text = (pm.dead and "✕ " or "") .. common.mon_name(pm), style = "meta" }
-        end
-      end
-      c[#c + 1] = { type = "row", id = "m-pr" .. i, gap = 8, align = "center", children = partners }
-    end
-    if not m.dead and not ctx.readonly then
-      c[#c + 1] = { type = "button", id = "m-dead" .. i, label = tr("mark_dead"), action = "mark_dead", value = m.id,
-        variant = "quiet", confirm = { title = tr("c_confirm_title_mark_dead"), text = tr("c_confirm_text_mark_dead"),
-          confirm_label = tr("c_submit_mark_dead"), danger = true } }
-    end
+    local pr = partners(ctx, me, i, m, groups)
+    if pr then c[#c + 1] = pr end
     kids[#kids + 1] = { type = "column", id = "mon" .. i, gap = 4, children = c }
   end
   if #kids == 0 then kids[1] = { type = "text", id = "team-empty", text = tr("team_empty"), style = "meta" } end
@@ -2969,8 +3455,9 @@ local function graveyard(ctx)
   if open then
     local rows = {}
     for i, g in ipairs(view.graveyard) do
+      if i > M.MAX_GRAVE_ROWS then break end
       rows[i] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), image = common.icon(ctx, g.species, g.form),
-        sub = tr("grave_sub", { route = g.route and oras.label(g.route, tr) or "?", player = common.name_of(view, g.owner) }),
+        sub = tr("grave_sub", { route = g.route and common.route_label(ctx, g.route) or "?", player = common.name_of(view, g.owner) }),
         tone = "neutral" }
     end
     if #rows > 0 then kids[#kids + 1] = { type = "list", id = "grave-list", rows = rows } end
@@ -2980,16 +3467,19 @@ end
 
 local function footer(ctx, me)
   local tr = ctx.tr
-  local opts = {}
-  for n = 0, 8 do opts[#opts + 1] = { value = n, label = tostring(n) } end
-  local kids = { { type = "stat", id = "badges", label = tr("badges"), value = tostring(me.badges) .. " / 8" } }
-  if not ctx.readonly then
+  local text = tr("panel_footer", { n = me.badges })
+  if me.level_cap then text = text .. " · " .. tr("next_cap_short", { n = me.level_cap }) end
+  local kids = { { type = "text", id = "badges", text = text, style = "meta" } }
+  if ctx.badges_manual and not ctx.readonly then
+    local opts = {}
+    for n = 0, 8 do opts[#opts + 1] = { value = n, label = tostring(n) } end
     kids[#kids + 1] = { type = "select", id = "badges-select", options = opts, selected = me.badges, action = "badges_select" }
   end
-  if me.level_cap then
-    kids[#kids + 1] = { type = "text", id = "cap", text = tr("next_cap", { n = me.level_cap }), style = "meta" }
+  if ctx.can_open then
+    kids[#kids + 1] = { type = "button", id = "f-open", label = tr("run_screen"), action = "open_run", variant = "secondary" }
+  else
+    kids[#kids + 1] = { type = "text", id = "f-update", text = tr("update_to_open"), style = "meta" }
   end
-  kids[#kids + 1] = { type = "button", id = "f-open", label = tr("run_screen"), action = "open_run", variant = "secondary" }
   return { type = "column", id = "footer", gap = 8, children = kids }
 end
 
@@ -3004,8 +3494,11 @@ function M.build(ctx)
   if picker then kids[#kids + 1] = picker end
   local hint = encounter_hint(ctx, me)
   if hint then kids[#kids + 1] = hint end
-  local corr = corr_ui.section(ctx)
-  if corr then kids[#kids + 1] = corr end
+  -- the "Doesn't count" form (5f-1) is opened from here; every other correction lives on the run screen
+  if ctx.ui.corr and ctx.ui.corr.kind == "doesnt_count" then
+    local corr = corr_ui.section(ctx)
+    if corr then kids[#kids + 1] = corr end
+  end
   kids[#kids + 1] = team(ctx, me)
   kids[#kids + 1] = graveyard(ctx)
   kids[#kids + 1] = footer(ctx, me)
@@ -3016,9 +3509,11 @@ return M
 
 end
 __mod["ui.screen"] = function(...)
--- Run screen (design 5e), shown in the in-game screen slot and, with ctx.compact, in the panel:
--- tabs Map | Routes | Team & box | Graveyard | Event log. The Map tab comes first once the map
--- setup (app.maps) has something to show: scanning, the candidate list or the chosen image.
+-- Run screen (design 5e), shown in the `screen` slot (and, read only, in the `run` slot of the Runs page):
+-- frame with tabs Map | Routes | Team & box | Graveyard | Event log. All manual corrections (5f) live here.
+-- The Map tab only shows an image after the player confirmed a candidate (app.maps); until then the
+-- Routes tab comes first and the Map tab shows the empty state (and the candidate chooser once the
+-- game files were scanned).
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -3034,17 +3529,30 @@ end
 local MAP_STATES = { ready = true, choose = true, scanning = true }
 function M.has_map(ctx) return ctx ~= nil and ctx.map ~= nil and MAP_STATES[ctx.map.state] == true end
 
+local RULE_ORDER = { "first_encounter_only", "dupes_clause", "shiny_clause", "hordes_count",
+  "pairs_differ_primary_type", "only_linked_in_team", "nickname_required", "level_caps" }
+
+local function rules_list(ctx)
+  local tr, view = ctx.tr, ctx.view
+  local rows = { { id = "ru-mode", title = tr("rs_mode"), sub = common.mode_text(view, tr) } }
+  for _, k in ipairs(RULE_ORDER) do
+    rows[#rows + 1] = { id = "ru-" .. k, title = tr("rs_" .. k), sub = tr(view.rules[k] and "rule_on" or "rule_off") }
+  end
+  return { type = "list", id = "rules-list", rows = rows }
+end
+
 local function header(ctx)
   local tr, view, run = ctx.tr, ctx.view, ctx.run
   local players = {}
   for i, p in ipairs(view.players) do
     players[#players + 1] = { type = "row", id = "ph" .. i, gap = 8, align = "center", children = {
       { type = "avatar", id = "ph-av" .. i, initial = common.initial(p.name), color = common.color(p, i), size = "m" },
-      { type = "text", id = "ph-t" .. i, text = p.name .. " · " .. common.place_label(p.place, tr), style = "body" },
+      { type = "text", id = "ph-t" .. i, text = p.name .. " · " .. common.place_label(p.place, tr, view), style = "body" },
     } }
   end
   local s = view.stats
-  return { type = "column", id = "head", gap = 8, children = {
+  local rules_open = ctx.ui.rules_open == true
+  local kids = {
     { type = "row", id = "head-row", gap = 8, align = "center", children = {
       { type = "text", id = "head-name", text = run.name or "", style = "title" },
       { type = "badge", id = "head-status", text = tr("run_status_" .. tostring(run.status)) .. " · " .. common.mode_text(view, tr),
@@ -3056,7 +3564,12 @@ local function header(ctx)
       { type = "stat", id = "st-routes", label = tr("stat_routes"), value = s.routes_done .. " / " .. s.routes_total },
       { type = "stat", id = "st-badges", label = tr("stat_badges"), value = tostring(s.badges_max) },
     } },
-  } }
+    { type = "row", id = "head-rules", gap = 8, children = {
+      { type = "chip", id = "rules-chip", text = tr("rules_title"), action = "rules_toggle", selected = rules_open },
+    } },
+  }
+  if rules_open then kids[#kids + 1] = rules_list(ctx) end
+  return { type = "column", id = "head", gap = 8, children = kids }
 end
 
 local function find_mine(ctx, route)
@@ -3099,7 +3612,7 @@ local function route_detail(ctx)
     end
     kids[#kids + 1] = { type = "row", id = "rd-acts", gap = 8, children = acts }
   end
-  return { type = "section", id = "route-detail", title = oras.label(route, tr), children = kids }
+  return { type = "section", id = "route-detail", title = common.route_label(ctx, route), children = kids }
 end
 
 local function routes_page(ctx)
@@ -3109,14 +3622,14 @@ local function routes_page(ctx)
   for _, r in ipairs(view.rows) do if r.done then n_done = n_done + 1 else n_open = n_open + 1 end end
   local columns = { tr("col_route") }
   for _, p in ipairs(view.players) do columns[#columns + 1] = p.name end
-  if not ctx.compact then columns[#columns + 1] = tr("col_group") end
+  columns[#columns + 1] = tr("col_group")
   columns[#columns + 1] = tr("col_status")
   local rows = {}
   for _, r in ipairs(view.rows) do
     if filter == "all" or (filter == "open" and not r.done) or (filter == "done" and r.done) then
-      local cells = { oras.label(r.route, tr) }
+      local cells = { common.route_label(ctx, r.route) }
       for _, p in ipairs(view.players) do cells[#cells + 1] = common.cell_text(r.cells[p.id], tr) end
-      if not ctx.compact then cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or "—" end
+      cells[#cells + 1] = (r.group and r.group.number) and tr("group_n", { n = r.group.number }) or "—"
       cells[#cells + 1] = common.group_state_text(r.group, tr)
       rows[#rows + 1] = { cells = cells, action = "route_select", value = r.route }
     end
@@ -3169,12 +3682,12 @@ local function team_page(ctx)
       local m = p.mons[id]
       if m.where == "box" then
         rows[#rows + 1] = { id = "b" .. id, title = (m.dead and "✕ " or "") .. common.mon_name(m), image = common.icon(ctx, m.species, m.form),
-          sub = m.route and oras.label(m.route, tr) or nil, tone = m.dead and "neutral" or nil }
+          sub = m.route and common.route_label(ctx, m.route) or nil, tone = m.dead and "neutral" or nil }
       end
     end
     kids[#kids + 1] = { type = "text", id = "box-count" .. i, text = tr("box_count", { n = p.box_count }), style = "eyebrow" }
     if #rows > 0 then kids[#kids + 1] = { type = "list", id = "box-list" .. i, rows = rows } end
-    secs[#secs + 1] = { type = "section", id = "pl" .. i, title = tr("team_player", { player = p.name, place = common.place_label(p.place, tr) }),
+    secs[#secs + 1] = { type = "section", id = "pl" .. i, title = tr("team_player", { player = p.name, place = common.place_label(p.place, tr, view) }),
       children = kids }
   end
   return { type = "column", id = "page-team", gap = 12, children = secs }
@@ -3188,7 +3701,7 @@ local function graveyard_page(ctx)
   local rows = {}
   for i, g in ipairs(view.graveyard) do
     local cause = g.doa and tr("cause_doa") or tr("cause_" .. tostring(g.cause))
-    local parts = { common.name_of(view, g.owner), g.route and oras.label(g.route, tr) or "—", cause }
+    local parts = { common.name_of(view, g.owner), g.route and common.route_label(ctx, g.route) or "—", cause }
     if g.group_number then parts[#parts + 1] = tr("group_n", { n = g.group_number }) end
     rows[#rows + 1] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), sub = table.concat(parts, " · "),
       image = common.icon(ctx, g.species, g.form), tone = "neutral",
@@ -3237,12 +3750,15 @@ local STEPS = { 2, 10, 40 }
 local function calibration(ctx, m)
   local tr, c = ctx.tr, ctx.ui.calib
   local opts = {}
-  for _, k in ipairs(oras.ROUTE_KEYS) do opts[#opts + 1] = { value = k, label = oras.label(k, tr) } end
+  for _, o in ipairs(common.route_options(ctx, nil, c.route)) do
+    if oras.is_route(o.value) then opts[#opts + 1] = o end
+  end
   local steps = {}
   for _, n in ipairs(STEPS) do steps[#steps + 1] = { value = n, label = tr("calib_px", { n = n }) } end
   local kids = {
     { type = "text", id = "calib-hint", text = tr("calib_hint"), style = "meta" },
-    { type = "select", id = "calib-route", options = opts, selected = c.route, action = "calib_route" },
+    { type = "select", id = "calib-route", options = #opts > 0 and opts or { { value = "", label = tr("place_none") } },
+      selected = c.route or "", action = "calib_route" },
     { type = "segmented", id = "calib-step", options = steps, selected = c.step or 10, action = "calib_step" },
   }
   if c.x then
@@ -3272,8 +3788,10 @@ local function candidates(ctx, m)
   for i, c in ipairs(m.candidates) do
     local row = {}
     if c.src then row[#row + 1] = { type = "image", id = "mc-img" .. i, src = c.src, size = "l", label = tr("map_cand", { n = i }) } end
+    local label = tr("map_cand_size", { n = i, w = c.w or "?", h = c.h or "?" })
+    if c.suggested then label = label .. " · " .. tr("map_suggested") end
     row[#row + 1] = { type = "column", id = "mc-col" .. i, gap = 4, children = {
-      { type = "text", id = "mc-t" .. i, text = tr("map_cand_size", { n = i, w = c.w or "?", h = c.h or "?" }), style = "body" },
+      { type = "text", id = "mc-t" .. i, text = label, style = "body" },
       { type = "button", id = "mc-use" .. i, label = tr("map_use"), action = "map_use", value = c.id, variant = "secondary" },
     } }
     kids[#kids + 1] = { type = "row", id = "mc-row" .. i, gap = 12, align = "center", children = row }
@@ -3284,11 +3802,12 @@ end
 local function map_page(ctx)
   local view, m, tr = ctx.view, ctx.map, ctx.tr
   if m.state ~= "ready" then
+    -- no image before the player confirmed a candidate: empty state (5e), then the chooser
+    local kids = { { type = "empty", id = "map-scan", title = tr("map_scanning"), text = tr("map_empty_text") } }
     if m.state == "choose" then
-      return { type = "column", id = "page-map", gap = 12, children = candidates(ctx, m) }
+      for _, b in ipairs(candidates(ctx, m)) do kids[#kids + 1] = b end
     end
-    return { type = "column", id = "page-map", gap = 12, children = {
-      { type = "empty", id = "map-scan", title = tr("map_scanning") } } }
+    return { type = "column", id = "page-map", gap = 12, children = kids }
   end
   local players, routes, shown = {}, {}, {}
   for i, p in ipairs(view.players) do
@@ -3314,9 +3833,10 @@ local function map_page(ctx)
   for _, r in ipairs(view.rows) do
     if m.coords[r.route] then route_marker(r.route); shown[r.route] = true end
   end
-  for _, key in ipairs(oras.ROUTE_KEYS) do
-    if m.coords[key] and not shown[key] then route_marker(key) end
-  end
+  local extra = {}
+  for key in pairs(m.coords) do if not shown[key] then extra[#extra + 1] = key end end
+  table.sort(extra, function(a, b) return oras.compare(a, b, view.order) end)
+  for _, key in ipairs(extra) do route_marker(key) end
   local calib = ctx.ui.calib
   if calib and calib.x then
     players[#players + 1] = { id = "cursor", initial = "+", color = 1, x = calib.x, y = calib.y }
@@ -3334,11 +3854,16 @@ local function map_page(ctx)
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end
 
---- Tab order for the current data: { "map"? , "routes", "team", "grave", "log" }.
+--- Tab order for the current data: Map | Routes | Team & box | Graveyard | Event log. The Map tab
+--- leads only with a confirmed image; while it is being set up it follows Routes; hidden when the
+--- game has no map to offer.
 function M.tab_ids(ctx)
   local ids = {}
-  if M.has_map(ctx) then ids[#ids + 1] = "map" end
-  for _, id in ipairs({ "routes", "team", "grave", "log" }) do ids[#ids + 1] = id end
+  local ready = ctx ~= nil and ctx.map ~= nil and ctx.map.state == "ready"
+  if ready then ids[#ids + 1] = "map" end
+  ids[#ids + 1] = "routes"
+  if M.has_map(ctx) and not ready then ids[#ids + 1] = "map" end
+  for _, id in ipairs({ "team", "grave", "log" }) do ids[#ids + 1] = id end
   return ids
 end
 
@@ -3352,11 +3877,8 @@ function M.build(ctx)
     local builders = { map = map_page, routes = routes_page, team = team_page, grave = graveyard_page, log = log_page }
     pages[i] = builders[id](ctx)
   end
-  local sel = math.min(math.max(ctx.tab or ctx.ui.screen_tab or 1, 1), #ids)
+  local sel = math.min(math.max(ctx.ui.screen_tab or 1, 1), #ids)
   local kids = {}
-  if ctx.compact then
-    kids[1] = { type = "button", id = "back", label = tr("back"), action = "panel_back", variant = "quiet" }
-  end
   kids[#kids + 1] = header(ctx)
   local corr = corr_ui.section(ctx)
   if corr then kids[#kids + 1] = corr end
@@ -3373,9 +3895,9 @@ local common = require("ui.common")
 
 local M = {}
 
---- player = view player entry of the tile's owner.
-function M.build(tr, player)
-  return { type = "text", id = "tile", text = tr("tile_strip", { place = common.place_label(player.place, tr), n = player.alive }),
+--- player = view player entry of the tile's owner; view supplies the stored place names.
+function M.build(tr, player, view)
+  return { type = "text", id = "tile", text = tr("tile_strip", { place = common.short(common.place_label(player.place, tr, view), 24), n = player.alive }),
     style = "meta" }
 end
 
