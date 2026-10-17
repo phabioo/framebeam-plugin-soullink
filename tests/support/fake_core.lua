@@ -1,6 +1,7 @@
--- Fake `pokemon.core` implementing the v0.3 contract (synthetic data only; names are made up by code).
+-- Fake `pokemon.core` implementing the v0.3 contract plus locations() of v0.3.1 (synthetic data only; names are made up by code).
 --   local core = fake_core.new()            core.provider = table for mock.set_provider("pokemon.core", ...)
 --   core.world: team, box (flat list of box 1), location, badges, battle, areas, species types ...
+--   core.world.locations: list of { id, name, zones, has_encounters } (v0.3.1); core:off("locations", "not_ready")
 --   core:off("areas", "unsupported")        makes a function answer nil, "unsupported" | "not_ready"
 --   core:encounter{ species=, location=, shiny=, horde= }   appends an entry to encounters() with the next seq
 local B = require("build")
@@ -18,6 +19,14 @@ function F.new(over)
       { id = 301, name = "Synthetic Area One", zones = { 10 }, encounters = { grass = { { species = 910, form = 0, min = 2, max = 4 } } } },
       { id = 302, name = "Synthetic Area Two", zones = { 11 }, encounters = { surf = { { species = 911, form = 0, min = 5, max = 8 } } } },
       { id = 303, name = "Synthetic Area Three", zones = { 12 }, encounters = { horde = { { species = 912, form = 0, min = 3, max = 3 } } } },
+    },
+    -- v0.3.1 locations(): every location in game order, towns and caves included
+    locations = {
+      { id = 400, name = "Synthetic Town", zones = { 13 }, has_encounters = false },
+      { id = 301, name = "Synthetic Area One", zones = { 10 }, has_encounters = true },
+      { id = 401, name = "Synthetic Cave", zones = { 14 }, has_encounters = false },
+      { id = 302, name = "Synthetic Area Two", zones = { 11 }, has_encounters = true },
+      { id = 303, name = "Synthetic Area Three", zones = { 12 }, has_encounters = true },
     },
     zone_info = { [13] = { zone = 13, location = 400, name = "Synthetic Town" } },
     battle = { active = false },
@@ -43,6 +52,7 @@ function F.new(over)
   p.location = guard("location", function() return w.location end)
   p.badges = guard("badges", function() return w.badges end)
   p.areas = guard("areas", function() return w.areas end)
+  p.locations = guard("locations", function() return w.locations end)
   p.battle = guard("battle", function() return w.battle end)
   p.encounters = guard("encounters", function() return w.encounters end)
   p.zone_info = guard("zone_info", function(z) return w.zone_info[z] end)
@@ -56,11 +66,12 @@ function F.new(over)
     if kind == "species" then return "Synthetic Species " .. id end
     if kind == "location" then
       for _, a in ipairs(w.areas) do if a.id == id then return a.name end end
+      for _, l in ipairs(w.locations) do if l.id == id then return l.name end end
       return "Synthetic Place " .. id
     end
     return nil, "unsupported"
   end)
-  p.info = guard("info", function() return { features = { names = true, areas = true } } end)
+  p.info = guard("info", function() return { features = { names = true, areas = true, locations = true } } end)
   self.provider = p
 
   function self:off(fn, reason) w.off[fn] = reason end

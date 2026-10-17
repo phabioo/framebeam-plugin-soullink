@@ -56,16 +56,11 @@ end
 
 local function battle_info(snap)
   local b = snap.battle
-  if type(b) ~= "table" or type(b.active) ~= "boolean" then return { known = false, own = {} } end
-  local own = {}
-  if type(b.own) == "table" then
-    for _, r in ipairs(b.own) do
-      local pid = type(r) == "table" and util.hex8(r.personality)
-      if pid and type(r.hp) == "number" then own[pid] = r.hp end
-    end
-  end
+  if type(b) ~= "table" or type(b.active) ~= "boolean" then return { known = false } end
+  -- b.own (hp of the own battlers) is deliberately not used: it can be stale while a battle ends
+  -- and caused premature deaths; a death needs the party record itself (see the death rule in diff).
   return { known = true, active = b.active, wild = b.wild == true, horde = b.horde == true,
-           foes = type(b.foes) == "table" and b.foes or (type(b.foe) == "table" and { b.foe } or {}), own = own }
+           foes = type(b.foes) == "table" and b.foes or (type(b.foe) == "table" and { b.foe } or {}) }
 end
 
 -- Is a line (family) already owned by a tracked mon that counts for the dupes clause?
@@ -86,13 +81,25 @@ local function zone_id(z)
   return nil
 end
 
--- Display name of a species: the record's own text, else the resolver; remembered in the state.
+-- Display name of a species: the record's own text, else the name already stored in the state, else
+-- the resolver; remembered in the state.
 local function note_species(st, opts, species, hint)
   if math.type(species) ~= "integer" then return hint end
   local name = (type(hint) == "string" and hint ~= "") and hint or nil
-  if not name and opts.names and opts.names.species then name = opts.names.species(species) end
+  if not name then
+    local known = st.names and st.names.sp and st.names.sp[tostring(species)]
+    if known then return known end
+    if opts.names and opts.names.species then name = opts.names.species(species) end
+  end
   if name then state.note_name(st, "sp", species, name) end
   return name
+end
+
+-- Identity of a place for change detection: the route key, else the location id, else the name.
+local function place_identity(p)
+  if p.key then return p.key end
+  if p.loc ~= nil then return "loc:" .. p.loc end
+  return p.name
 end
 
 --- Place from the reported location. With a location name id (pokemon-core v0.3) and the encounter
@@ -123,9 +130,9 @@ local function update_place(st, loc, facts, opts)
   local new
   if by_area then
     local key = areas.set[lid] and oras.area_key(lid) or nil
-    local name = (areas.names and areas.names[lid]) or loc.name
+    local name = (areas.names and areas.names[lid]) or loc.name or st.names.loc[tostring(lid)]
     new = { key = key, name = name, zone = zone, loc = lid, manual = false }
-    if key then state.note_name(st, "loc", lid, name) end
+    if name then state.note_name(st, "loc", lid, name) end
   else
     local mapped = (opts.zones or oras.ZONES)[zone]
     if mapped ~= nil then
@@ -133,10 +140,15 @@ local function update_place(st, loc, facts, opts)
     else
       new = { name = loc.name, zone = zone, manual = false }
     end
+    -- a zone nobody mapped and nobody named is stored (the UI asks which place this is) but never logged
   end
+  -- a location without key and name (name text still loading) is transient too
+  if by_area and new.key == nil and new.name == nil then return end
+  local same = place_identity(new) == place_identity(old)
+  if same and new.name == nil then new.name = old.name end
   if new.key ~= old.key or new.name ~= old.name or new.zone ~= old.zone or new.loc ~= old.loc or old.manual then
     st.place = new
-    if new.key ~= old.key or new.name ~= old.name then
+    if not same and (new.key or new.name) then
       facts[#facts + 1] = { kind = "place", key = new.key, name = new.name, zone = new.zone, loc = new.loc,
                             manual = false, previous = old.key }
     end
@@ -274,6 +286,37 @@ local function newest_seq(list)
   return max
 end
 
+D.PENDING_MS = 60000 -- how long an ended wild battle may stay undecided (caught or missed)
+
+local function has_encounter(st)
+  for _, e in pairs(st.routes) do if e.status == "encounter" then return true end end
+  return false
+end
+
+-- Close the pending encounter(s): routes still at "encounter" are missed.
+local function expire_pending(st, facts)
+  st.pend = nil
+  for _, key in ipairs(util.keys(st.routes)) do
+    local e = st.routes[key]
+    if e.status == "encounter" then
+      e.status = "missed"
+      facts[#facts + 1] = { kind = "missed", route = key, species = e.species }
+    end
+  end
+end
+
+-- Copy a list of ids into st[field] (limited); only when it changed.
+local function sync_ids(st, field, src, max)
+  if type(src) ~= "table" then return end
+  local n = math.min(#src, max)
+  local same = type(st[field]) == "table" and #st[field] == n
+  if same then for i, id in ipairs(st[field]) do if src[i] ~= id then same = false; break end end end
+  if not same then
+    st[field] = {}
+    for i = 1, n do st[field][i] = src[i] end
+  end
+end
+
 --- diff(prev, snap, cfg, opts) -> new_state, facts
 ---   prev  own state (nil = fresh); never modified
 ---   snap  see the snapshot description above
@@ -302,15 +345,12 @@ function D.diff(prev, snap, cfg, opts)
     st.game.id = st.game.id or opts.game.id
     st.game.language = st.game.language or opts.game.language
   end
-  if opts.areas and type(opts.areas.order) == "table" then
-    local o, same = opts.areas.order, type(st.areas) == "table" and #st.areas == math.min(#opts.areas.order, state.MAX_AREAS)
-    if same then for i, id in ipairs(st.areas) do if o[i] ~= id then same = false; break end end end
-    if not same then
-      st.areas = {}
-      for i = 1, math.min(#o, state.MAX_AREAS) do st.areas[i] = o[i] end
-    end
+  if opts.areas then
+    sync_ids(st, "areas", opts.areas.order, state.MAX_AREAS)
+    sync_ids(st, "places", opts.areas.places, state.MAX_PLACES)
   end
 
+  local loc_now = type(snap.location) == "table" and snap.location or {}
   update_place(st, snap.location, facts, opts)
   local b = badge_count(snap.badges)
   if b then st.badges = b end
@@ -318,6 +358,8 @@ function D.diff(prev, snap, cfg, opts)
   local list, map, team_known, boxes_known = collect(snap)
   local bat = battle_info(snap)
   local catch_place
+  local settled = not (bat.known and bat.active) and not st.inb -- no battle now, none ended just now
+  local now = type(opts.now) == "number" and opts.now or nil
 
   -- encounters() with seq: only entries newer than the last handled one count
   local enc = {}
@@ -362,6 +404,7 @@ function D.diff(prev, snap, cfg, opts)
         if m.ty ~= nil and opts.types then m.ty = opts.types(rec.species, rec.form) or m.ty end
       end
       m.form = rec.form
+      note_species(st, opts, rec.species, rec.species_name) -- team rows show names, never "#id"
       m.level = rec.level or m.level
       m.nickname = util.clean_text(rec.nickname, 24) or m.nickname
       if rec.nicknamed == false then m.nicknamed = false elseif rec.nicknamed == true then m.nicknamed = nil end
@@ -370,26 +413,25 @@ function D.diff(prev, snap, cfg, opts)
         facts[#facts + 1] = { kind = "moved", mon = pid, from = m.where, to = c.where }
         m.where = c.where
       end
-      -- fainted: live team hp reaches 0, or the battle reports it for the own battler first
-      -- (m.fz: counted from the battle, the team record has not caught up yet)
+      -- fainted: the party record itself shows hp 0 (with a plausible max hp) while no battle is running
+      -- and none ended since the previous snapshot. The battle's own-battler data is never used (stale
+      -- while a battle ends). While unsettled the last known hp stays, so the death is still counted.
       local team_hp = type(rec.hp) == "number" and rec.hp or nil
-      local own_zero = bat.own[pid] ~= nil and bat.own[pid] <= 0
-      if own_zero or (team_hp and team_hp <= 0) then
-        if m.hp and m.hp > 0 and not m.fz then
-          m.deaths = (m.deaths or 0) + 1
-          facts[#facts + 1] = { kind = "death", mon = pid, species = m.species, nickname = m.nickname,
-                                route = m.route, deaths = m.deaths,
-                                species_name = note_species(st, opts, m.species, rec.species_name) }
+      if team_hp and team_hp <= 0 then
+        local valid = rec.max_hp == nil or (type(rec.max_hp) == "number" and rec.max_hp > 0)
+        if valid and settled then
+          if m.hp and m.hp > 0 then
+            m.deaths = (m.deaths or 0) + 1
+            facts[#facts + 1] = { kind = "death", mon = pid, species = m.species, nickname = m.nickname,
+                                  route = m.route, deaths = m.deaths,
+                                  species_name = note_species(st, opts, m.species, rec.species_name) }
+          end
+          m.hp = 0
         end
-        m.hp = 0
-        m.fz = (own_zero and not (team_hp and team_hp <= 0)) or nil
       elseif team_hp then
-        if m.fz and bat.known and bat.active then
-          m.hp = 0 -- stale party data during the battle
-        else
-          m.hp, m.fz = team_hp, nil
-        end
+        m.hp = team_hp
       end
+      m.fz = nil
       if type(rec.max_hp) == "number" then m.mhp = rec.max_hp end
     elseif team_known and boxes_known and m.where ~= "gone" then
       m.miss = (m.miss or 0) + 1 -- gone only after two snapshots in a row (no transient states)
@@ -423,6 +465,7 @@ function D.diff(prev, snap, cfg, opts)
       for _, e in ipairs(enc) do
         if e.seq > st.enc_seq then
           st.enc_seq = e.seq
+          if st.pend then expire_pending(st, facts) end
           handle_encounter(st, cfg, encounter_route(st, e, opts), e, e.horde == true, facts, family, opts)
         end
       end
@@ -430,15 +473,19 @@ function D.diff(prev, snap, cfg, opts)
   end
   if bat.known then
     if not seq_mode and bat.active and not st.inb and bat.wild then
+      if st.pend then expire_pending(st, facts) end
       handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family, opts)
     elseif not bat.active and st.inb then
-      for _, key in ipairs(util.keys(st.routes)) do
-        local e = st.routes[key]
-        if e.status == "encounter" then
-          e.status = "missed"
-          facts[#facts + 1] = { kind = "missed", route = key, species = e.species }
-        end
+      -- the battle ended: caught, missed or fled is not known yet (the catch shows up in the party or
+      -- the boxes only after the Pokedex page and the nickname dialog), so the encounter stays pending
+      if has_encounter(st) then
+        st.pend = { since = now, zone = st.inb_zone, loc = st.inb_loc }
       end
+    end
+    if bat.active then
+      st.inb_zone, st.inb_loc = zone_id(loc_now.zone) or st.inb_zone, zone_id(loc_now.location) or st.inb_loc
+    else
+      st.inb_zone, st.inb_loc = nil, nil
     end
     st.inb = bat.active
   elseif not seq_mode and type(snap.encounters) == "table" then
@@ -446,6 +493,20 @@ function D.diff(prev, snap, cfg, opts)
       if type(e) == "table" then
         handle_encounter(st, cfg, st.place.key, e, e.horde == true, facts, family, opts)
       end
+    end
+  end
+
+  -- a pending encounter ends as caught (see above), or as missed when the player moved on, the next
+  -- wild battle started or the timeout passed
+  if st.pend then
+    if not has_encounter(st) then
+      st.pend = nil
+    else
+      local p = st.pend
+      local moved = (p.loc ~= nil and zone_id(loc_now.location) ~= nil and p.loc ~= zone_id(loc_now.location))
+        or (p.zone ~= nil and p.loc == nil and zone_id(loc_now.zone) ~= nil and p.zone ~= zone_id(loc_now.zone))
+      if p.since == nil and now then p.since = now end
+      if moved or (now and p.since and now - p.since >= D.PENDING_MS) then expire_pending(st, facts) end
     end
   end
 

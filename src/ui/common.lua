@@ -34,29 +34,46 @@ function C.short(text, n)
   return util.clean_text(text, n) or ""
 end
 
---- Options for a route select (at most 100): optional "no group" entry, the starter, the game's
---- areas in game order, then keys with activity that are not areas (free places, legacy routes) and
---- the selected key. Areas at the end are dropped first when the list is too long.
+C.MAX_OPTIONS = 100
+
+--- Value of the place select that stands for a player's current place: the route key, else the
+--- location (a town has no route key but is still an option), else nil.
+function C.place_value(place)
+  if type(place) ~= "table" then return nil end
+  if place.key then return place.key end
+  if place.loc ~= nil then return oras.area_key(place.loc) end
+  return nil
+end
+
+--- Options for a route select (at most 100): optional "no group" entry, the starter, then the places of
+--- the game (view.places: encounter areas, towns, caves ... from the game, in game order), keys with
+--- activity that are not game places (free places, legacy routes) and the selected key, in game order.
+--- When there are too many, the selected key and the keys with activity are kept first and the
+--- rest of the game's places fill the remaining room in game order.
 function C.route_options(ctx, none_label, selected)
   local view = ctx.view
-  local head, tail, seen = {}, {}, {}
+  local head, seen = {}, {}
   if none_label then head[#head + 1] = { value = "none", label = none_label }; seen.none = true end
+  seen[oras.STARTER] = true
+  head[#head + 1] = { value = oras.STARTER, label = C.route_label(ctx, oras.STARTER) }
+  local first, rest = {}, {}
   local function add(list, key)
     if key and not seen[key] then
       seen[key] = true
-      list[#list + 1] = { value = key, label = C.route_label(ctx, key) }
+      list[#list + 1] = key
     end
   end
-  add(head, oras.STARTER)
-  local areas = {}
-  for _, id in ipairs(view.areas or {}) do add(areas, oras.area_key(id)) end
-  for _, r in ipairs(view.rows) do add(tail, r.route) end
-  add(tail, selected)
-  local room = 100 - #head - #tail
+  add(first, selected)
+  for _, r in ipairs(view.rows) do add(first, r.route) end
+  for _, id in ipairs(view.places or view.areas or {}) do add(rest, oras.area_key(id)) end
+  local room = math.max(C.MAX_OPTIONS - #head, 0)
+  local keys = {}
+  for i = 1, math.min(#first, room) do keys[#keys + 1] = first[i] end
+  for i = 1, math.min(#rest, math.max(room - #keys, 0)) do keys[#keys + 1] = rest[i] end
+  table.sort(keys, function(a, b) return oras.compare(a, b, view.order) end)
   local out = {}
   for _, o in ipairs(head) do out[#out + 1] = o end
-  for i = 1, math.min(#areas, math.max(room, 0)) do out[#out + 1] = areas[i] end
-  for _, o in ipairs(tail) do if #out < 100 then out[#out + 1] = o end end
+  for _, k in ipairs(keys) do out[#out + 1] = { value = k, label = C.route_label(ctx, k) } end
   return out
 end
 

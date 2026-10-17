@@ -142,8 +142,10 @@ t.case("panel: place picker only without a location, collapsed behind Set place"
   t.ok(pk)
   local sel = ui_validator.find(pk, "place-select")
   t.eq(sel.options[1].value, "starter")
-  t.eq(sel.options[2].value, "loc:301", "areas of the game, not a route list")
-  t.eq(sel.options[2].label, "Synthetic Area One")
+  t.eq(sel.options[2].value, "loc:400", "places of the game in game order, towns included")
+  t.eq(sel.options[2].label, "Synthetic Town")
+  t.eq(sel.options[3].value, "loc:301")
+  t.eq(sel.options[3].label, "Synthetic Area One")
   t.ok(#sel.options <= 100)
   e.act("place_select", "loc:302")
   t.eq(e.state().place.key, "loc:302")
@@ -244,7 +246,7 @@ t.case("screen: map tab shows an image only after the candidate was confirmed", 
   -- calibration offers the game's areas
   e.act("calib_toggle")
   local sel = ui_validator.find(e.m.ui.trees.screen, "calib-route")
-  t.eq(sel.options[1].value, "loc:301")
+  t.eq(sel.options[1].value, "loc:301", "calibration offers the encounter areas, not towns")
   e.act("calib_route", "loc:302")
   e.act("calib_set")
   t.eq(e.m.cache_files["map/coords.json"], '{"map":"a","routes":{"loc:302":{"x":50,"y":30}}}')
@@ -293,7 +295,7 @@ t.case("routes: areas not ready yet leaves the place alone, unsupported areas fa
   e.step(2500)
   t.eq(e.state().place.key, "loc:301")
   -- unsupported areas(): zone table fallback incl. the "which place?" card
-  local e2 = boot({ setup = function(c) c:off("areas", "unsupported") end })
+  local e2 = boot({ setup = function(c) c:off("areas", "unsupported"); c:off("locations", "unsupported") end })
   e2.step(); e2.step()
   t.ok(ui_validator.find(e2.m.ui.trees.panel, "zone-new"), "fallback asks for unmapped zones")
   e2.act("place_select", "starter")
@@ -305,7 +307,7 @@ t.case("legacy route-N state keeps working (labels, rows, panel)", function()
   jt:start({ 0xB1, 0xB2 })
   jt:place("route-101")
   jt:catch(0x77, 12, { nick = "Old" })
-  local e = boot({ states = { ["u-lena"] = jt.st }, setup = function(c) c:off("location", "unsupported"); c:off("areas", "unsupported") end })
+  local e = boot({ states = { ["u-lena"] = jt.st }, setup = function(c) c:off("location", "unsupported"); c:off("areas", "unsupported"); c:off("locations", "unsupported") end })
   e.step()
   local panel = e.m.ui.trees.panel
   t.eq(ui_validator.find(panel, "loc").title, "Route 101")
@@ -317,7 +319,7 @@ t.case("legacy route-N state keeps working (labels, rows, panel)", function()
   e.act("missed_open", "loc:302"); e.act("corr_submit")
   tbl = ui_validator.find(e.m.ui.trees.screen, "routes-table")
   t.eq(tbl.rows[1].cells[1], "Route 101")
-  t.eq(tbl.rows[2].cells[1], "Area 302")
+  t.eq(tbl.rows[2].cells[1], "Place #302")
   -- and the picker still lists the legacy key that has activity
   local view = e.app.view
   local ctx = e.app:ctx(view)
@@ -426,10 +428,12 @@ t.case("catch lands on the pending encounter's area; missed after the battle", f
   e.step()
   e.core:battle_end()
   e.step()
+  t.eq(e.state().routes["loc:303"].status, "encounter", "undecided right after the battle")
+  e.step(61000)
   t.eq(e.state().routes["loc:303"].status, "missed")
 end)
 
-t.case("death: team hp 0, battle own hp 0 (once), revival", function()
+t.case("death: only from the party record, never from battle own data or right after a battle", function()
   local e = boot()
   e.step()
   e.core:encounter({ species = 910 })
@@ -445,20 +449,34 @@ t.case("death: team hp 0, battle own hp 0 (once), revival", function()
   t.eq(#d, 1); t.eq(d[1].payload.species_name, "Synthetic Species 910")
   e.full(); e.full()
   t.eq(mon().deaths, 1, "counted once")
-  -- the battle reports hp 0 first while the team record is stale
+  -- revived, then the battle reports hp 0 for the own battler: ignored (it can be stale)
   e.world.box[1].hp = 20
   e.full()
   t.eq(mon().hp, 20)
   e.core:battle_start({ species = 911, own = { { personality = 0x82, species = 910, hp = 0, max_hp = 30 } } })
-  e.step()
-  t.eq(mon().deaths, 2)
-  e.step(); e.step()
-  t.eq(mon().deaths, 2, "stale party hp during the battle is ignored")
+  e.step(); e.step(); e.step()
+  t.eq(mon().deaths, 1, "battle own hp 0 does not count")
+  t.eq(mon().hp, 20)
+  -- the party record shows 0 during the battle: counted only once the battle is over and settled
   e.world.box[1].hp = 0
+  e.full(); e.full()
+  t.eq(mon().deaths, 1, "not during the battle")
+  t.eq(mon().hp, 20, "last known hp kept meanwhile")
+  e.core:battle_end()
   e.full()
-  t.eq(mon().deaths, 2, "the team record catching up is not a second death")
+  t.eq(mon().deaths, 1, "not in the snapshot where the battle ended")
+  e.full()
+  t.eq(mon().deaths, 2)
   t.eq(#events_of(e.m, "soullink.death"), 2)
+  e.step(); e.full()
+  t.eq(mon().deaths, 2, "counted once")
   t.ok(e.app.view.players[1].mons["00000082"].dead)
+  -- an implausible record (max hp 0) is no death
+  e.world.box[1].hp, e.world.box[1].max_hp = 10, 30
+  e.full()
+  e.world.box[1].hp, e.world.box[1].max_hp = 0, 0
+  e.full()
+  t.eq(mon().deaths, 2)
   -- untracked (baseline) mons never produce deaths
   e.world.team[1].hp = 0
   e.full()
@@ -548,6 +566,8 @@ t.case("names: catch, encounter and place store display names; other players see
   e.world.box[1].species_name = "From Record"
   e.core:encounter({ species = 911 })
   e.step()
+  e.full()
+  t.eq(e.state().names.sp["910"], "From Record", "the record's own text updates the stored name")
   -- dedupe per id and short
   local before = util.json_size(e.state().names)
   e.step(); e.full()
@@ -558,7 +578,7 @@ t.case("names: catch, encounter and place store display names; other players see
   run.me = "u-jonas"
   local states = { ["u-lena"] = e.state(), ["u-jonas"] = { v = 1 } }
   local v = view_mod.view(run, states, {}, B.cfg("soullink"))
-  t.eq(v.players[1].mons["00000085"].species_name, "Synthetic Species 910")
+  t.eq(v.players[1].mons["00000085"].species_name, "From Record")
   t.eq(v.players[1].mons["00000085"].route, "loc:301")
   local hud = require("ui.hud").build({ view = v, run = run, me = "u-lena", ui = {}, tr = e.app.tr })
   t.ok(texts(hud):find("Synthetic Area One", 1, true))

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.4.0 (compact panel, run screen opened from the game, detection from pokemon-core 0.3). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.4.1 (compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -18,6 +18,13 @@ Status: v0.4.0 (compact panel, run screen opened from the game, detection from p
 - Detection: `encounters()` seq (first per area, hordes, shiny and dupes clause), catch by team/box diff, death by live hp 0 or battle hp 0, badges from `badges()`, pairs-differ-primary-type via `species_info`.
 - Map tab shows an image only after the player confirmed a candidate.
 - Open: level caps and map positions of the areas are recorded with the real game; see `docs/architecture.md` open points.
+
+## v0.4.1 fixes from the first playtest
+
+- Place select and Routes list use all places of the game (`areas()` + `locations()`: towns, caves), current place preselected; no more naming places by hand.
+- A finished wild battle stays pending until the mon shows up (caught) or the player moves on / the next wild battle / 60 s (missed); deaths only from the party record.
+- No "No place yet" events for transient reads; species and place names are resolved at render time when they were unknown at posting time.
+- Run screen: first tab selected by default and tracked by id; rules collapsed to a summary.
 
 ## Later
 

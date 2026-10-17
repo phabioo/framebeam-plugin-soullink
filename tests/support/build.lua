@@ -51,6 +51,7 @@ end
 function B.tracker(uid, cfg, log, opts)
   local t = { uid = uid, cfg = cfg, log = log, opts = opts or {}, recs = {}, team = {}, box = {},
               st = nil, last_facts = {}, snap_extra = {} }
+  t.opts.now = t.opts.now or 0
   function t:snapshot()
     local team, box = {}, {}
     for _, p in ipairs(self.team) do team[#team + 1] = util.copy(self.recs[p]) end
@@ -96,9 +97,23 @@ function B.tracker(uid, cfg, log, opts)
       foes = { B.rec({ p = 0xF00D, sp = sp, shiny = o.shiny }) } }
     return self:step()
   end
-  function t:end_battle()
+  --- The battle ends; the encounter stays pending (caught or missed is decided later, see detect.diff).
+  function t:end_battle_only()
     self.snap_extra.battle = { active = false, wild = false, foes = {} }
     return self:step()
+  end
+  --- Time passes (ms of the tracker's clock, detect opts.now) and one snapshot is taken.
+  function t:wait(ms)
+    self.opts.now = (self.opts.now or 0) + ms
+    return self:step()
+  end
+  --- The battle ends and the pending encounter times out: an uncaught encounter is missed.
+  function t:end_battle()
+    local facts = self:end_battle_only()
+    local more = self:wait(detect.PENDING_MS + 1000)
+    for _, f in ipairs(more) do facts[#facts + 1] = f end
+    self.last_facts = facts
+    return facts
   end
   return t
 end

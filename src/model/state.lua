@@ -9,6 +9,7 @@ S.MAX_BYTES = 48 * 1024
 S.MAX_NAMES = { sp = 400, loc = 200 }  -- entries per name table
 S.NAME_LEN = { sp = 24, loc = 32 }     -- characters per name
 S.MAX_AREAS = 400
+S.MAX_PLACES = 600
 
 --- Fresh state. `game` = { id = ..., language = ... } (both optional).
 ---
@@ -27,8 +28,12 @@ S.MAX_AREAS = 400
 ---            the game when a catch / encounter / place was recorded (short, one entry per id), so other
 ---            players and the Hub show names without a running game
 ---   areas  = { <location id>, ... }   encounter areas in game order (pokemon-core areas()), for ordering
+---   places = { <location id>, ... }   every place of the game in game order (pokemon-core locations(), else
+---            the areas), for the place select; areas is the subset with encounter slots
+---   pend   = { since?, zone?, loc? }   a wild battle ended and its encounter is still undecided: it becomes
+---            caught when the mon shows up, missed when the player moves on, the next wild battle starts or
+---            60 s pass (model.detect)
 ---   enc_seq = n   last handled pokemon-core encounters() seq
----   mons[..].fz = true   death already counted from the battle (until the team record agrees)
 ---   mons[..].ty = n   primary type id (only with the rule pairs_differ_primary_type)
 function S.new(game)
   local g = {}
