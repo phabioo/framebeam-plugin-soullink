@@ -152,7 +152,7 @@ Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui
 - Family lookup (evolution lines) for the dupes clause: only the `family` hook exists, the default compares species ids. A table keyed by species ids is needed (no names).
 - `pairs_differ_primary_type` is stored but not evaluated: it needs primary types per species.
 - Zone id -> route key table (`data.oras.ZONE_TO_ROUTE`) and the ORAS level caps (`LEVEL_CAPS`) are to be filled and verified locally with the real game.
-- pokemon-core is a manifest `requires` (`>=0.1`; 0.2 adds icons, location and the map): the Start dialog adds it to the run automatically (newest Hub version that fits) and it needs no `run.state` permission; the Hub must offer a matching version. Version 0.3.0 of this plugin.
+- pokemon-core is a manifest `requires` (`>=0.1`; 0.2 adds icons, location and the map): the Start dialog adds it to the run automatically (newest Hub version that fits) and it needs no `run.state` permission; the Hub must offer a matching version. Version 0.3.1 of this plugin.
 - Changing rules during a run is not modeled (run settings are fixed at the start).
 - Tracking start (baseline vs starter) is decided from the first snapshot; the run start flow (new game vs existing save) should tell the plugin explicitly (`opts.first`).
 - Participants with status other than `joined` are not players; `left` participants drop out of link groups.
