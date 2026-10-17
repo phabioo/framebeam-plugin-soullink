@@ -77,6 +77,15 @@ t.case("no run: empty states, no tracking", function()
   m.action("open_run", nil, "panel") -- harmless
 end)
 
+t.case("fact text without a route has no place phrase", function()
+  local e = boot()
+  local txt = e.app:fact_text({ kind = "catch", nickname = "Zippy", species = 1, why = "no_place" })
+  t.eq(txt, "Lena caught Zippy. Place unknown.")
+  t.ok(not txt:find("No place yet", 1, true))
+  t.eq(e.app:fact_text({ kind = "missed" }), "Lena missed a place.")
+  t.ok(not e.app:fact_text({ kind = "encounter", species = 5 }):find("No place yet", 1, true))
+end)
+
 t.case("catch: state, event and panel", function()
   local e = boot()
   local st = e.m.run.states["u-lena"]
@@ -402,7 +411,7 @@ t.case("package builds and verifies", function()
   local ok = os.execute("python3 -c 'import sys' >/dev/null 2>&1")
   if not ok then return t.skip("python3 not available") end
   local dir = os.tmpname() .. ".d"
-  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.3.0 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/net.framebeam.soullink-0.3.0.fbplugin >/dev/null")
+  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.3.1 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/net.framebeam.soullink-0.3.1.fbplugin >/dev/null")
   t.ok(ok2, "package.py failed")
   local bad = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v9.9.9 >/dev/null 2>&1")
   t.ok(not bad, "tag/version mismatch must fail")

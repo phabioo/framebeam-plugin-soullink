@@ -185,13 +185,17 @@ function A:fact_text(f)
   local mon = common.mon_name({ nickname = f.nickname, species = f.species })
   local text
   if f.kind == "catch" then
-    text = tr("ev_catch", { player = player, mon = mon, place = self:place_text(f.route) })
+    text = f.route and tr("ev_catch", { player = player, mon = mon, place = self:place_text(f.route) })
+      or tr("ev_catch_noplace", { player = player, mon = mon })
   elseif f.kind == "death" then
     text = tr("ev_death", { player = player, mon = mon })
   elseif f.kind == "encounter" then
-    text = tr("ev_encounter", { player = player, mon = "#" .. tostring(f.species or "?"), place = self:place_text(f.route) })
+    local m = "#" .. tostring(f.species or "?")
+    text = f.route and tr("ev_encounter", { player = player, mon = m, place = self:place_text(f.route) })
+      or tr("ev_encounter_noplace", { player = player, mon = m })
   elseif f.kind == "missed" then
-    text = tr("ev_missed", { player = player, place = self:place_text(f.route) })
+    text = f.route and tr("ev_missed", { player = player, place = self:place_text(f.route) })
+      or tr("ev_missed_noplace", { player = player })
   elseif f.kind == "place" then
     text = tr("ev_place", { player = player, place = f.key and self:place_text(f.key) or (f.name or tr("place_none")) })
   end
@@ -224,9 +228,9 @@ function A:on_event(ev)
   if ev.type == events.TYPES.death then
     self.queue[#self.queue + 1] = { ev = ev, tries = 0 }
   elseif ev.type == events.TYPES.catch and ev.user_id ~= self.me and p.counts then
-    self:notify({ tone = "info", text = self.tr("note_catch", {
-      player = self:player_name(ev.user_id), mon = common.mon_name({ nickname = p.nickname, species = p.species }),
-      place = self:place_text(p.route) }) })
+    local who = { player = self:player_name(ev.user_id), mon = common.mon_name({ nickname = p.nickname, species = p.species }) }
+    if p.route then who.place = self:place_text(p.route) end
+    self:notify({ tone = "info", text = self.tr(p.route and "note_catch" or "note_catch_noplace", who) })
   end
 end
 
