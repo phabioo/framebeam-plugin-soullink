@@ -147,37 +147,69 @@ local function build_info(areas, locs)
   return info
 end
 
---- Encounter areas (`areas()`) and places (`locations()`, optional, pokemon-core >= 0.3.1), loaded once:
---- self.areas_info = { set, order, names, places }. nil while not ready. A core without locations() works
---- with the areas alone; while locations() answers "not_ready" it is asked again every 5 s.
+A.REASK_MS = 5000      -- areas()/locations() asked again while not ready, failed, empty or unnamed
+A.REFRESH_MS = 30000   -- a complete list is refreshed this often
+
+--- A list is final when it has entries and all of them have a name.
+local function final_list(list)
+  if type(list) ~= "table" or #list == 0 then return false end
+  for _, e in ipairs(list) do
+    if type(e) ~= "table" or type(e.name) ~= "string" or e.name == "" then return false end
+  end
+  return true
+end
+
+--- Ask one list function of the core. Returns the list when it changed, nil otherwise; sets the next ask time.
+--- "unsupported" is permanent; nil + "not_ready"/"failed", an empty list or entries without names are asked
+--- again every REASK_MS, a complete list every REFRESH_MS.
+function A:ask_list(fn, field, now)
+  local ok, list, why = pcall(self.fb.call, A.CORE, fn)
+  if not ok or why == "unsupported" then self[fn .. "_unsupported"] = true; return nil end
+  if type(list) ~= "table" then self[fn .. "_next"] = now + (self[field] and A.REASK_MS or 2000); return nil end
+  self[fn .. "_next"] = now + (final_list(list) and A.REFRESH_MS or A.REASK_MS)
+  if util.encode(list) == util.encode(self[field] or false) then return nil end
+  self[field] = list
+  return list
+end
+
+--- Encounter areas (`areas()`) and places (`locations()`, optional, pokemon-core >= 0.3.1):
+--- self.areas_info = { set, order, names, places }. nil while nothing is known. Both lists are asked again
+--- until they are complete (see ask_list) and refreshed from time to time. A core without locations() works
+--- with the areas alone.
 function A:refresh_areas()
   if self.viewing then return end
   local now = self.fb.clock()
-  if self.areas_next and now < self.areas_next then return end
-  if not self.area_list and not self.areas_unsupported then
-    local ok, list, why = pcall(self.fb.call, A.CORE, "areas")
-    if not ok or why == "unsupported" then self.areas_unsupported = true
-    elseif type(list) ~= "table" then self.areas_next = now + 2000; return
-    else self.area_list = list end
-  end
   local changed = false
-  if not self.loc_list and not self.locations_unsupported then
-    if self.locations_next and now < self.locations_next then
-      -- asked again later
-    else
-      local ok, list, why = pcall(self.fb.call, A.CORE, "locations")
-      if not ok or why == "unsupported" then self.locations_unsupported = true
-      elseif type(list) ~= "table" then self.locations_next = now + 5000
-      else self.loc_list = list; changed = true end
-    end
+  if not self.areas_unsupported and not (self.areas_next and now < self.areas_next) then
+    if self:ask_list("areas", "area_list", now) then changed = true end
   end
-  if (self.area_list and not self.areas_info) or changed then
+  if not self.locations_unsupported and not (self.locations_next and now < self.locations_next) then
+    if self:ask_list("locations", "loc_list", now) then changed = true end
+  end
+  if (self.area_list or self.areas_unsupported) and (changed or (not self.areas_info and self.loc_list)) then
     self.areas_info = build_info(self.area_list, self.loc_list)
     self.dirty = true
-  elseif not self.areas_info and self.loc_list then
-    self.areas_info = build_info(nil, self.loc_list)
-    self.dirty = true
   end
+end
+
+--- Game data diagnostics of pokemon-core >= 0.3.2 (`diagnostics()`, a flat table of numbers and strings), only
+--- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open. A core
+--- without it (unsupported) leaves self.diag nil and the block is omitted.
+function A:refresh_diag()
+  if self.viewing or self.diag_unsupported then return end
+  local empty = not (self.areas_info and #self.areas_info.places > 0)
+  if not (empty or self.ui.diag_open or self.diag == nil) then return end
+  local now = self.fb.clock()
+  if self.diag_next and now < self.diag_next then return end
+  self.diag_next = now + 5000
+  local ok, v, why = pcall(self.fb.call, A.CORE, "diagnostics")
+  if not ok or why == "unsupported" then self.diag_unsupported, self.diag = true, nil; return end
+  if type(v) ~= "table" then return end
+  local d = {}
+  for k, x in pairs(v) do
+    if type(k) == "string" and (type(x) == "number" or type(x) == "string" or type(x) == "boolean") then d[k] = x end
+  end
+  if util.encode(d) ~= util.encode(self.diag or {}) then self.diag, self.dirty = d, true end
 end
 
 --- Primary type of a species (`species_info`), cached; nil when unknown.
@@ -316,6 +348,7 @@ function A:poll(full)
   if snap.badges ~= nil then self.badges_seen = true end
   self.name_budget = A.NAME_BUDGET
   self:refresh_areas()
+  self:refresh_diag()
   local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), game = { id = game.code, language = game.language },
     zones = view_mod.merge_zones(self.run, self:states()),
     areas = self.areas_info, areas_unsupported = self.areas_unsupported,
@@ -500,7 +533,7 @@ end
 function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
            events = self.events, hud_death = self.hud_until and self.hud_text or nil,
-           map = self.maps and self.maps:view() or nil,
+           map = self.maps and self.maps:view() or nil, diag = self.diag,
            can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
            badges_manual = not self.badges_seen,
            area_name = function(id) return self:area_name(id) end,
@@ -652,11 +685,32 @@ function A:map_action(action, value)
   elseif action == "map_remove" then
     m:remove()
     self.ui.calib = nil
+  elseif action == "crop_toggle" then
+    self.ui.crop_open = not self.ui.crop_open
+    if self.ui.crop_open and not m.pending then m:preset(m.crop and "applied" or "suggest") end
+  elseif action == "crop_adj" then
+    local side, d = tostring(value):match("^([tblr]):(-?%d+)$")
+    if side then m:adjust(side, math.tointeger(tonumber(d))) end
+  elseif action == "crop_preset" then
+    m:preset(value)
   elseif action == "calib_toggle" then
     self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
     m.order = self.view and self.view.order or nil
+    if self.ui.calib then
+      -- preselect the current place of this player (when it can carry a position)
+      local me = self.view and self.me and common.player(self.view, self.me)
+      local key = me and common.place_value(me.place)
+      if key and oras.is_route(key) then self:calib_route(key) end
+    end
   elseif c and action == "calib_route" then
     self:calib_route(value)
+  elseif c and action == "calib_group" then
+    local groups = common.place_groups(self:ctx(self.view), c.route)
+    local g = math.type(value) == "integer" and groups[value]
+    if g then
+      c.group = value
+      if g.opts[1] then self:calib_route(g.opts[1].value) end
+    end
   elseif c and action == "calib_step" then
     if A.CAL_STEPS[value] then c.step = value end
   elseif c and action == "calib_move" and c.x then
@@ -702,6 +756,7 @@ function A:on_action(action, value, slot)
     self.dirty = true
     self:open_screen()
   elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
+  elseif action == "diag_toggle" then self.ui.diag_open = not self.ui.diag_open; self.diag_next = nil; self.dirty = true
   elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
@@ -722,7 +777,7 @@ function A:on_action(action, value, slot)
       elseif value.kind == "filter" then self.ui.map_filter = value.value end
       self.dirty = true
     end
-  elseif action:sub(1, 6) == "calib_" or action:sub(1, 4) == "map_" then
+  elseif action:sub(1, 6) == "calib_" or action:sub(1, 4) == "map_" or action:sub(1, 5) == "crop_" then
     self:map_action(action, value)
   elseif not writable then
     return
@@ -916,7 +971,11 @@ __mod["app.maps"] = function(...)
 -- the game picture API). The PNG stays in the own cache of this player (never in the run state):
 --   map/<game id>.png   the captured map (empty file = removed)
 --   map/current.txt     game id of the last capture (the run view in the shell has no game id)
---   map/coords.json     { map = game id, routes = { [route key] = { x, y } } } recorded by the player
+--   map/coords.json     { map = game id, crop = { t, b, l, r }, routes = { [route key] = { x, y } } } recorded by the player;
+--                       crop = percent of the captured screen cut off at top/bottom/left/right when the stored PNG was
+--                       taken (the capture rect lies inside the bottom screen, so the PNG is already cropped)
+-- Route positions are image pixels of the cropped map. Taking the map again with another crop RESCALES the
+-- recorded positions (screen fraction kept) instead of clearing them; without a known old crop it is 0.
 -- Route positions on the image are our own recorded facts (data.oras.COORDS[game id]) merged under the
 -- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older Player) the
 -- Map tab says so; nothing else depends on it.
@@ -928,6 +987,25 @@ M.__index = M
 
 M.COORDS_FILE, M.CURRENT = "map/coords.json", "map/current.txt"
 M.NO_GAME = "game"
+M.SIDES = { "t", "b", "l", "r" }
+M.MAX_CROP = 45 -- percent per side; opposite sides together stay below 90
+
+--- Clamp a crop table { t, b, l, r } (percent) to whole numbers 0..MAX_CROP with opposite sides <= 90 together.
+function M.clean_crop(c)
+  local out = {}
+  for _, k in ipairs(M.SIDES) do
+    local v = type(c) == "table" and tonumber(c[k]) or 0
+    out[k] = math.max(0, math.min(M.MAX_CROP, math.floor((v or 0) + 0.5)))
+  end
+  return out
+end
+
+--- Suggested crop of the game in percent (data.oras.map_crop, an estimate), or all zero.
+function M.suggest_crop(game)
+  local f = oras.map_crop(game)
+  if not f then return M.clean_crop({}) end
+  return M.clean_crop({ t = f.top * 100, b = f.bottom * 100, l = f.left * 100, r = f.right * 100 })
+end
 
 --- Width and height from a PNG header, or nil.
 function M.png_size(s)
@@ -946,6 +1024,7 @@ function M.new(fb, live)
                               api = type(fb.video) == "table" and type(fb.video.capture) == "function" }, M)
   self.game = (type(code) == "string" and code ~= "") and code or nil
   self:restore()
+  self.edit = self.crop and M.clean_crop(self.crop) or M.suggest_crop(self.game)
   return self
 end
 
@@ -974,11 +1053,17 @@ function M:restore()
 end
 
 function M:load_coords()
-  self.coords = {}
+  self.coords, self.crop = {}, nil
   local s = self:read(M.COORDS_FILE)
   if type(s) ~= "string" or not self.id then return end
   local id = s:match('"map"%s*:%s*"(.-)"')
   if id ~= self.id then return end
+  local cs = s:match('"crop"%s*:%s*(%b{})')
+  if cs then
+    local c = {}
+    for _, k in ipairs(M.SIDES) do c[k] = tonumber(cs:match('"' .. k .. '"%s*:%s*(%d+)')) end
+    self.crop = M.clean_crop(c)
+  end
   local routes = s:match('"routes"%s*:%s*(%b{})') or ""
   for key, x, y in routes:gmatch('"([^"]+)"%s*:%s*{%s*"x"%s*:%s*(-?%d+)%s*,%s*"y"%s*:%s*(-?%d+)%s*}') do
     if oras.is_route(key) then self.coords[key] = { x = tonumber(x), y = tonumber(y) } end
@@ -988,7 +1073,7 @@ end
 function M:save_coords()
   local routes = {}
   for key, c in pairs(self.coords) do routes[key] = { x = c.x, y = c.y } end
-  self:write(M.COORDS_FILE, util.encode({ map = self.id, routes = routes }))
+  self:write(M.COORDS_FILE, util.encode({ map = self.id, crop = self.crop, routes = routes }))
 end
 
 --- Route positions: data.oras.COORDS[map id] with the recorded ones on top.
@@ -1030,13 +1115,45 @@ function M:export_line()
   return line
 end
 
---- Screen to capture: "bottom", else "main", else nil (no game / no such screen).
+--- Screen to capture: the entry "bottom", else "main" of fb.video.screens() ({ name, x, y, w, h }), else nil.
 function M:target()
   local ok, list = pcall(self.fb.video.screens)
   if not ok or type(list) ~= "table" then return nil end
-  local has = {}
-  for _, sc in ipairs(list) do if type(sc) == "table" then has[sc.name] = true end end
-  return (has.bottom and "bottom") or (has.main and "main") or nil
+  local by = {}
+  for _, sc in ipairs(list) do
+    if type(sc) == "table" and math.type(sc.x) == "integer" and math.type(sc.y) == "integer"
+        and math.type(sc.w) == "integer" and math.type(sc.h) == "integer" and sc.w > 0 and sc.h > 0 then
+      by[sc.name] = sc
+    end
+  end
+  return by.bottom or by.main or nil
+end
+
+--- Capture rectangle inside screen `sc` for `crop` (percent): { x, y, w, h } in the screen coordinates.
+function M.crop_rect(sc, crop)
+  local c = M.clean_crop(crop)
+  local l, r = sc.w * c.l // 100, sc.w * c.r // 100
+  local tp, bt = sc.h * c.t // 100, sc.h * c.b // 100
+  return { x = sc.x + l, y = sc.y + tp, w = math.max(1, sc.w - l - r), h = math.max(1, sc.h - tp - bt) }
+end
+
+--- Change one side of the crop being edited by `delta` percent ("t", "b", "l", "r"), within the limits.
+function M:adjust(side, delta)
+  if not (self.edit and self.edit[side] ~= nil) or math.type(delta) ~= "integer" then return false end
+  local opp = ({ t = "b", b = "t", l = "r", r = "l" })[side]
+  local v = math.max(0, math.min(M.MAX_CROP, self.edit[side] + delta))
+  v = math.min(v, 90 - self.edit[opp])
+  self.edit[side] = math.max(0, v)
+  return true
+end
+
+--- Set the crop being edited: "none" (full screen), "suggest" (data.oras estimate) or "applied" (of the stored map).
+function M:preset(name)
+  if name == "none" then self.edit = M.clean_crop({})
+  elseif name == "suggest" then self.edit = M.suggest_crop(self.game)
+  elseif name == "applied" then self.edit = self.crop and M.clean_crop(self.crop) or M.clean_crop({})
+  else return false end
+  return true
 end
 
 --- Start a capture of the game picture. Returns true when a request is pending.
@@ -1047,13 +1164,14 @@ function M:capture()
   if self.pending then self.error = "busy"; return false end
   local target = self:target()
   if not target then self.error = "no_frame"; return false end
-  local ok, id = pcall(self.fb.video.capture, target)
+  local rect = M.crop_rect(target, self.edit)
+  local ok, id = pcall(self.fb.video.capture, rect)
   if not ok then
     self.fb.log.warn("soullink map capture: " .. tostring(id))
     self.error = "failed"
     return false
   end
-  self.pending = id
+  self.pending, self.pending_crop = id, M.clean_crop(self.edit)
   return true
 end
 
@@ -1068,13 +1186,32 @@ function M:on_captured(e)
   local w, h = M.png_size(e.png)
   if not w then self.error = "failed"; return true end
   self.id = self.game
+  local old_w, old_h, old_crop = self.w, self.h, self.crop or M.clean_crop({})
   if not (self:write(self:file(), e.png) and self:write(M.CURRENT, self.id)) then
     self.error = "failed"
     return true
   end
   self.w, self.h, self.state, self.error = w, h, "ready", nil
   self:load_coords()
+  self:rescale(old_w, old_h, old_crop, self.pending_crop, w, h)
+  self.crop = self.pending_crop
+  self:save_coords()
+  self.edit = M.clean_crop(self.crop)
   return true
+end
+
+--- Positions recorded on an image of old_w x old_h cropped by `old` (percent) move to the new image
+--- (new_w x new_h, crop `new`): the point on the screen stays the same. Needs an old image; otherwise nothing changes.
+function M:rescale(old_w, old_h, old, new, new_w, new_h)
+  if not old_w or not old_h or next(self.coords) == nil then return end
+  local function frac(c) return c.l / 100, c.t / 100, 1 - (c.l + c.r) / 100, 1 - (c.t + c.b) / 100 end
+  local ol, ot, ow, oh = frac(old)
+  local nl, nt, nw, nh = frac(new)
+  for _, c in pairs(self.coords) do
+    local fx, fy = ol + c.x / old_w * ow, ot + c.y / old_h * oh
+    c.x = math.max(0, math.min(new_w, math.floor((fx - nl) / nw * new_w + 0.5)))
+    c.y = math.max(0, math.min(new_h, math.floor((fy - nt) / nh * new_h + 0.5)))
+  end
 end
 
 --- Remove the map image; the recorded positions stay.
@@ -1086,7 +1223,8 @@ end
 --- What the UI needs: { state = none|ready, api, live, pending, error?, src?, w?, h?, id?, coords }.
 function M:view()
   return { state = self.state, id = self.id, w = self.w, h = self.h, api = self.api, live = self.live,
-           pending = self.pending ~= nil, error = self.error,
+           pending = self.pending ~= nil, error = self.error, crop = self.crop, edit = self.edit,
+           suggest = oras.map_crop(self.game) ~= nil,
            src = self.state == "ready" and ("cache:" .. self:file()) or nil, coords = self:merged() }
 end
 
@@ -1182,6 +1320,17 @@ M.ZONE_TO_ROUTE = M.ZONES -- old name
 --- pixels. Our own recorded facts, EMPTY for now: positions are recorded in the Map tab
 --- ("Place routes") and exported with "Export positions".
 M.COORDS = {}
+
+--- Suggested crop of the captured bottom screen for the in-game region map (AreaNav): fractions of the
+--- screen cut off at each side. ESTIMATE only (title bar at the top, side panel on the right of the
+--- "Karten-Navi" screen), not measured; the player adjusts it in the Map tab ("Crop map").
+M.MAP_CROP = { top = 0.09, bottom = 0, left = 0, right = 0.22 }
+
+--- Suggested crop { top, bottom, left, right } (fractions 0..1) for a game id, or nil when there is none.
+--- Every game this plugin supports is Omega Ruby / Alpha Sapphire, so the id does not matter yet.
+function M.map_crop(game)
+  return M.MAP_CROP
+end
 
 --- Level cap hint by number of badges owned: LEVEL_CAPS[badges] = cap of the next gym.
 --- VERIFY LOCALLY against the real game before relying on it; hints only, never blocking.
@@ -3103,6 +3252,115 @@ function C.place_value(place)
   return nil
 end
 
+--- The view entry of player `id`, or nil.
+function C.player(view, id)
+  for _, p in ipairs(view and view.players or {}) do if p.id == id then return p end end
+  return nil
+end
+
+C.GROUP_SIZE = 90
+
+--- Places a position can be set for, as groups of at most GROUP_SIZE route options (a select holds at most
+--- 100): every place of the game (towns and caves too, view.places), the encounter areas, places used in the
+--- run, the players' current places and `selected`; no starter. With up to 100 places there is one group.
+--- Otherwise the first group holds the selected key, the places used in the run and the current places, filled
+--- up in game order; the others follow in game order. Each group is sorted in game order and carries
+--- `first`/`last`, the ordinals of its places in that sequence ("Places 1-90").
+--- Returns { { opts = { {value, label} }, first, last }, ... } (one empty group when nothing is known).
+function C.place_groups(ctx, selected)
+  local view = ctx.view
+  local prio, rest, seen = {}, {}, {}
+  local function add(list, key)
+    if key and oras.is_route(key) and not seen[key] then seen[key] = true; list[#list + 1] = key end
+  end
+  local known = {}
+  for _, id in ipairs(view.places or {}) do known[oras.area_key(id) or false] = true end
+  for _, id in ipairs(view.areas or {}) do known[oras.area_key(id) or false] = true end
+  for _, r in ipairs(view.rows or {}) do add(prio, r.route) end
+  for _, p in ipairs(view.players or {}) do add(prio, C.place_value(p.place)) end
+  -- the selected key only joins the first group when the game does not list it (groups stay stable)
+  if selected and not known[selected] then add(prio, selected) end
+  for _, id in ipairs(view.places or view.areas or {}) do add(rest, oras.area_key(id)) end
+  for _, id in ipairs(view.areas or {}) do add(rest, oras.area_key(id)) end
+  local function cmp(x, y) return oras.compare(x, y, view.order) end
+  local seq = {}
+  if #prio + #rest <= C.MAX_OPTIONS then
+    for _, k in ipairs(prio) do seq[#seq + 1] = k end
+    for _, k in ipairs(rest) do seq[#seq + 1] = k end
+    table.sort(seq, cmp)
+  else
+    table.sort(prio, cmp)
+    for _, k in ipairs(prio) do seq[#seq + 1] = k end
+    for _, k in ipairs(rest) do seq[#seq + 1] = k end
+  end
+  local size = #seq <= C.MAX_OPTIONS and math.max(#seq, 1) or math.max(C.GROUP_SIZE, #prio + 1)
+  local groups = {}
+  for i = 1, math.max(#seq, 1), size do
+    local keys = {}
+    for j = i, math.min(i + size - 1, #seq) do keys[#keys + 1] = seq[j] end
+    table.sort(keys, cmp)
+    local opts = {}
+    for _, k in ipairs(keys) do opts[#opts + 1] = { value = k, label = C.route_label(ctx, k) } end
+    groups[#groups + 1] = { opts = opts, first = i, last = math.min(i + size - 1, #seq) }
+  end
+  return groups
+end
+
+--- Index of the group that holds `key`, else `want` (when valid), else 1.
+function C.group_of(groups, key, want)
+  for i, g in ipairs(groups) do
+    for _, o in ipairs(g.opts) do if o.value == key then return i end end
+  end
+  return (want and groups[want]) and want or 1
+end
+
+--- Options of the active group (see place_groups); the plain list when everything fits one select.
+function C.place_options(ctx, selected, want)
+  local groups = C.place_groups(ctx, selected)
+  return groups[C.group_of(groups, selected, want)].opts
+end
+
+--- Up to two lines "key=value key=value ..." of a flat diagnostics table (pokemon-core diagnostics()),
+--- keys sorted, strings cut to 40 characters. Empty list for nil or an empty table.
+function C.diag_lines(d)
+  if type(d) ~= "table" then return {} end
+  local keys = {}
+  for k in pairs(d) do keys[#keys + 1] = k end
+  table.sort(keys)
+  if #keys > 40 then for i = #keys, 41, -1 do keys[i] = nil end end
+  local parts, total = {}, 0
+  for _, k in ipairs(keys) do
+    local v = d[k]
+    if type(v) == "string" then v = util.clean_text(v, 40) or "" end
+    local part = k .. "=" .. tostring(v)
+    parts[#parts + 1] = part
+    total = total + #part + 1
+  end
+  local lines, cur = {}, {}
+  local half = math.ceil(total / 2)
+  local len = 0
+  for i, part in ipairs(parts) do
+    if #lines == 0 and #cur > 0 and len + #part >= half + 12 then
+      lines[1], cur, len = table.concat(cur, " "), {}, 0
+    end
+    cur[#cur + 1] = part
+    len = len + #part + 1
+  end
+  if #cur > 0 then lines[#lines + 1] = table.concat(cur, " ") end
+  return lines
+end
+
+--- "Game data" block (diagnostics of the core, one or two key=value lines and a hint), or nil without
+--- diagnostics. `id` makes the block ids unique when it appears twice.
+function C.diag_block(ctx, id)
+  local lines = C.diag_lines(ctx.diag)
+  if #lines == 0 then return nil end
+  local kids = { { type = "text", id = id .. "-title", text = ctx.tr("diag_title"), style = "eyebrow" } }
+  for i, l in ipairs(lines) do kids[#kids + 1] = { type = "text", id = id .. "-" .. i, text = l, style = "meta", wrap = true } end
+  kids[#kids + 1] = { type = "text", id = id .. "-hint", text = ctx.tr("diag_hint"), style = "meta" }
+  return { type = "column", id = id, gap = 4, children = kids }
+end
+
 --- Options for a route select (at most 100): optional "no group" entry, the starter, then the places of
 --- the game (view.places: encounter areas, towns, caves ... from the game, in game order), keys with
 --- activity that are not game places (free places, legacy routes) and the selected key, in game order.
@@ -3723,6 +3981,13 @@ local function header(ctx)
     } },
   }
   if rules_open then kids[#kids + 1] = { type = "scroll", id = "rules-scroll", max_height = "s", children = { rules_list(ctx) } } end
+  if ctx.diag ~= nil then
+    local open = ctx.ui.diag_open == true
+    kids[#kids + 1] = { type = "row", id = "head-diag", gap = 8, align = "center", children = {
+      { type = "chip", id = "diag-chip", text = tr("diag_title"), action = "diag_toggle", selected = open } } }
+    local blk = open and common.diag_block(ctx, "diag")
+    if blk then kids[#kids + 1] = blk end
+  end
   return { type = "column", id = "head", gap = 8, children = kids }
 end
 
@@ -3802,6 +4067,10 @@ local function routes_page(ctx)
     kids[#kids + 1] = { type = "table", id = "routes-table", columns = columns, rows = rows }
   else
     kids[#kids + 1] = { type = "text", id = "routes-empty", text = tr("routes_empty"), style = "meta" }
+  end
+  if #(view.places or {}) == 0 and not ctx.ui.diag_open then
+    local blk = common.diag_block(ctx, "routes-diag")
+    if blk then kids[#kids + 1] = blk end
   end
   local d = route_detail(ctx)
   if d then kids[#kids + 1] = d end
@@ -3907,20 +4176,23 @@ local STEPS = { 2, 10, 40 }
 
 local function calibration(ctx, m)
   local tr, c = ctx.tr, ctx.ui.calib
-  local opts = {}
-  local is_area = {}
-  for _, id in ipairs(ctx.view.areas or {}) do is_area[oras.area_key(id)] = true end
-  for _, o in ipairs(common.route_options(ctx, nil, c.route)) do
-    if oras.is_route(o.value) and (is_area[o.value] or not oras.area_id(o.value)) then opts[#opts + 1] = o end
-  end
+  local groups = common.place_groups(ctx, c.route)
+  local gi = common.group_of(groups, c.route, c.group)
+  local opts = groups[gi].opts
   local steps = {}
   for _, n in ipairs(STEPS) do steps[#steps + 1] = { value = n, label = tr("calib_px", { n = n }) } end
   local kids = {
     { type = "text", id = "calib-hint", text = tr("calib_hint"), style = "meta" },
-    { type = "select", id = "calib-route", options = #opts > 0 and opts or { { value = "", label = tr("place_none") } },
+    { type = "select", id = "calib-route", options = #opts > 0 and opts or { { value = "", label = tr("calib_no_places") } },
       selected = c.route or "", action = "calib_route" },
     { type = "segmented", id = "calib-step", options = steps, selected = c.step or 10, action = "calib_step" },
   }
+  if #groups > 1 then
+    local gopts = {}
+    for i, g in ipairs(groups) do gopts[i] = { value = i, label = tr("calib_group", { a = g.first, b = g.last }) } end
+    table.insert(kids, 2, { type = (#groups <= 3) and "segmented" or "select", id = "calib-group", options = gopts,
+      selected = gi, action = "calib_group" })
+  end
   if c.x then
     kids[#kids + 1] = { type = "text", id = "calib-pos", text = tr("calib_pos", { x = c.x, y = c.y }), style = "meta" }
     kids[#kids + 1] = { type = "row", id = "calib-arrows", gap = 8, children = {
@@ -3937,6 +4209,37 @@ local function calibration(ctx, m)
     { type = "button", id = "calib-done", label = tr("calib_done"), action = "calib_toggle", variant = "quiet" },
   } }
   return { type = "section", id = "calib", title = tr("calib_title"), children = kids }
+end
+
+local SIDE_KEYS = { t = "crop_top", b = "crop_bottom", l = "crop_left", r = "crop_right" }
+
+--- Crop of the map: per side the percent of the captured screen that is cut off (-5 -1 +1 +5), presets, and
+--- the button that takes the map again with this crop (the stored picture is cropped at the capture).
+local function crop_section(ctx, m)
+  local tr = ctx.tr
+  local e = m.edit or { t = 0, b = 0, l = 0, r = 0 }
+  local kids = { { type = "text", id = "crop-hint", text = tr("crop_hint"), style = "meta" } }
+  for _, side in ipairs({ "t", "b", "l", "r" }) do
+    local btns = { { type = "text", id = "crop-v" .. side, text = tr(SIDE_KEYS[side], { n = e[side] }), style = "body" } }
+    for _, d in ipairs({ -5, -1, 1, 5 }) do
+      btns[#btns + 1] = { type = "button", id = "crop-" .. side .. (d < 0 and "m" or "p") .. math.abs(d),
+        label = (d > 0 and "+" or "−") .. math.abs(d), action = "crop_adj", value = side .. ":" .. d, variant = "secondary" }
+    end
+    kids[#kids + 1] = { type = "row", id = "crop-row-" .. side, gap = 6, align = "center", children = btns }
+  end
+  local presets = { { type = "button", id = "crop-none", label = tr("crop_none"), action = "crop_preset", value = "none", variant = "quiet" } }
+  if m.suggest then
+    presets[#presets + 1] = { type = "button", id = "crop-suggest", label = tr("crop_suggest"), action = "crop_preset",
+      value = "suggest", variant = "quiet" }
+  end
+  kids[#kids + 1] = { type = "row", id = "crop-presets", gap = 8, children = presets }
+  if m.suggest then kids[#kids + 1] = { type = "text", id = "crop-estimate", text = tr("crop_estimate"), style = "meta" } end
+  if m.live and m.api then
+    kids[#kids + 1] = { type = "button", id = "crop-apply", label = tr(m.state == "ready" and "crop_apply" or "map_take"),
+      action = "map_capture", variant = "primary" }
+  end
+  if m.state == "ready" then kids[#kids + 1] = { type = "text", id = "crop-rescale", text = tr("crop_rescale"), style = "meta" } end
+  return { type = "section", id = "crop", title = tr("crop_title"), children = kids }
 end
 
 local MAP_ERRORS = { busy = true, rate_limited = true, no_frame = true, unknown_screen = true, invalid_rect = true,
@@ -3969,8 +4272,11 @@ local function map_page(ctx)
     local kids = { { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_empty_text") } }
     for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
     if m.live then
-      kids[#kids + 1] = { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture",
-        variant = "primary" }
+      kids[#kids + 1] = { type = "row", id = "map-take-row", gap = 8, children = {
+        { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture", variant = "primary" },
+        { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
+          variant = ctx.ui.crop_open and "primary" or "quiet" } } }
+      if ctx.ui.crop_open then kids[#kids + 1] = crop_section(ctx, m) end
     end
     return { type = "column", id = "page-map", gap = 12, children = kids }
   end
@@ -4014,10 +4320,15 @@ local function map_page(ctx)
   if m.live and m.api then
     acts[#acts + 1] = { type = "button", id = "map-retake", label = tr("map_retake"), action = "map_capture", variant = "quiet" }
   end
+  if m.live and m.api then
+    acts[#acts + 1] = { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
+      variant = ctx.ui.crop_open and "primary" or "quiet" }
+  end
   acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
     confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
   local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
   for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
+  if ctx.ui.crop_open and m.live and m.api then kids[#kids + 1] = crop_section(ctx, m) end
   if calib then kids[#kids + 1] = calibration(ctx, m) end
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end

@@ -129,37 +129,69 @@ local function build_info(areas, locs)
   return info
 end
 
---- Encounter areas (`areas()`) and places (`locations()`, optional, pokemon-core >= 0.3.1), loaded once:
---- self.areas_info = { set, order, names, places }. nil while not ready. A core without locations() works
---- with the areas alone; while locations() answers "not_ready" it is asked again every 5 s.
+A.REASK_MS = 5000      -- areas()/locations() asked again while not ready, failed, empty or unnamed
+A.REFRESH_MS = 30000   -- a complete list is refreshed this often
+
+--- A list is final when it has entries and all of them have a name.
+local function final_list(list)
+  if type(list) ~= "table" or #list == 0 then return false end
+  for _, e in ipairs(list) do
+    if type(e) ~= "table" or type(e.name) ~= "string" or e.name == "" then return false end
+  end
+  return true
+end
+
+--- Ask one list function of the core. Returns the list when it changed, nil otherwise; sets the next ask time.
+--- "unsupported" is permanent; nil + "not_ready"/"failed", an empty list or entries without names are asked
+--- again every REASK_MS, a complete list every REFRESH_MS.
+function A:ask_list(fn, field, now)
+  local ok, list, why = pcall(self.fb.call, A.CORE, fn)
+  if not ok or why == "unsupported" then self[fn .. "_unsupported"] = true; return nil end
+  if type(list) ~= "table" then self[fn .. "_next"] = now + (self[field] and A.REASK_MS or 2000); return nil end
+  self[fn .. "_next"] = now + (final_list(list) and A.REFRESH_MS or A.REASK_MS)
+  if util.encode(list) == util.encode(self[field] or false) then return nil end
+  self[field] = list
+  return list
+end
+
+--- Encounter areas (`areas()`) and places (`locations()`, optional, pokemon-core >= 0.3.1):
+--- self.areas_info = { set, order, names, places }. nil while nothing is known. Both lists are asked again
+--- until they are complete (see ask_list) and refreshed from time to time. A core without locations() works
+--- with the areas alone.
 function A:refresh_areas()
   if self.viewing then return end
   local now = self.fb.clock()
-  if self.areas_next and now < self.areas_next then return end
-  if not self.area_list and not self.areas_unsupported then
-    local ok, list, why = pcall(self.fb.call, A.CORE, "areas")
-    if not ok or why == "unsupported" then self.areas_unsupported = true
-    elseif type(list) ~= "table" then self.areas_next = now + 2000; return
-    else self.area_list = list end
-  end
   local changed = false
-  if not self.loc_list and not self.locations_unsupported then
-    if self.locations_next and now < self.locations_next then
-      -- asked again later
-    else
-      local ok, list, why = pcall(self.fb.call, A.CORE, "locations")
-      if not ok or why == "unsupported" then self.locations_unsupported = true
-      elseif type(list) ~= "table" then self.locations_next = now + 5000
-      else self.loc_list = list; changed = true end
-    end
+  if not self.areas_unsupported and not (self.areas_next and now < self.areas_next) then
+    if self:ask_list("areas", "area_list", now) then changed = true end
   end
-  if (self.area_list and not self.areas_info) or changed then
+  if not self.locations_unsupported and not (self.locations_next and now < self.locations_next) then
+    if self:ask_list("locations", "loc_list", now) then changed = true end
+  end
+  if (self.area_list or self.areas_unsupported) and (changed or (not self.areas_info and self.loc_list)) then
     self.areas_info = build_info(self.area_list, self.loc_list)
     self.dirty = true
-  elseif not self.areas_info and self.loc_list then
-    self.areas_info = build_info(nil, self.loc_list)
-    self.dirty = true
   end
+end
+
+--- Game data diagnostics of pokemon-core >= 0.3.2 (`diagnostics()`, a flat table of numbers and strings), only
+--- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open. A core
+--- without it (unsupported) leaves self.diag nil and the block is omitted.
+function A:refresh_diag()
+  if self.viewing or self.diag_unsupported then return end
+  local empty = not (self.areas_info and #self.areas_info.places > 0)
+  if not (empty or self.ui.diag_open or self.diag == nil) then return end
+  local now = self.fb.clock()
+  if self.diag_next and now < self.diag_next then return end
+  self.diag_next = now + 5000
+  local ok, v, why = pcall(self.fb.call, A.CORE, "diagnostics")
+  if not ok or why == "unsupported" then self.diag_unsupported, self.diag = true, nil; return end
+  if type(v) ~= "table" then return end
+  local d = {}
+  for k, x in pairs(v) do
+    if type(k) == "string" and (type(x) == "number" or type(x) == "string" or type(x) == "boolean") then d[k] = x end
+  end
+  if util.encode(d) ~= util.encode(self.diag or {}) then self.diag, self.dirty = d, true end
 end
 
 --- Primary type of a species (`species_info`), cached; nil when unknown.
@@ -298,6 +330,7 @@ function A:poll(full)
   if snap.badges ~= nil then self.badges_seen = true end
   self.name_budget = A.NAME_BUDGET
   self:refresh_areas()
+  self:refresh_diag()
   local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), game = { id = game.code, language = game.language },
     zones = view_mod.merge_zones(self.run, self:states()),
     areas = self.areas_info, areas_unsupported = self.areas_unsupported,
@@ -482,7 +515,7 @@ end
 function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
            events = self.events, hud_death = self.hud_until and self.hud_text or nil,
-           map = self.maps and self.maps:view() or nil,
+           map = self.maps and self.maps:view() or nil, diag = self.diag,
            can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
            badges_manual = not self.badges_seen,
            area_name = function(id) return self:area_name(id) end,
@@ -634,11 +667,32 @@ function A:map_action(action, value)
   elseif action == "map_remove" then
     m:remove()
     self.ui.calib = nil
+  elseif action == "crop_toggle" then
+    self.ui.crop_open = not self.ui.crop_open
+    if self.ui.crop_open and not m.pending then m:preset(m.crop and "applied" or "suggest") end
+  elseif action == "crop_adj" then
+    local side, d = tostring(value):match("^([tblr]):(-?%d+)$")
+    if side then m:adjust(side, math.tointeger(tonumber(d))) end
+  elseif action == "crop_preset" then
+    m:preset(value)
   elseif action == "calib_toggle" then
     self.ui.calib = (not c and m.state == "ready") and { step = 10 } or nil
     m.order = self.view and self.view.order or nil
+    if self.ui.calib then
+      -- preselect the current place of this player (when it can carry a position)
+      local me = self.view and self.me and common.player(self.view, self.me)
+      local key = me and common.place_value(me.place)
+      if key and oras.is_route(key) then self:calib_route(key) end
+    end
   elseif c and action == "calib_route" then
     self:calib_route(value)
+  elseif c and action == "calib_group" then
+    local groups = common.place_groups(self:ctx(self.view), c.route)
+    local g = math.type(value) == "integer" and groups[value]
+    if g then
+      c.group = value
+      if g.opts[1] then self:calib_route(g.opts[1].value) end
+    end
   elseif c and action == "calib_step" then
     if A.CAL_STEPS[value] then c.step = value end
   elseif c and action == "calib_move" and c.x then
@@ -684,6 +738,7 @@ function A:on_action(action, value, slot)
     self.dirty = true
     self:open_screen()
   elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
+  elseif action == "diag_toggle" then self.ui.diag_open = not self.ui.diag_open; self.diag_next = nil; self.dirty = true
   elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
@@ -704,7 +759,7 @@ function A:on_action(action, value, slot)
       elseif value.kind == "filter" then self.ui.map_filter = value.value end
       self.dirty = true
     end
-  elseif action:sub(1, 6) == "calib_" or action:sub(1, 4) == "map_" then
+  elseif action:sub(1, 6) == "calib_" or action:sub(1, 4) == "map_" or action:sub(1, 5) == "crop_" then
     self:map_action(action, value)
   elseif not writable then
     return
