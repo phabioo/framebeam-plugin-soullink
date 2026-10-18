@@ -193,12 +193,12 @@ function A:refresh_areas()
 end
 
 --- Game data diagnostics of pokemon-core >= 0.3.2 (`diagnostics()`, a flat table of numbers and strings), only
---- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open. A core
+--- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open (it is open until the player closes it). A core
 --- without it (unsupported) leaves self.diag nil and the block is omitted.
 function A:refresh_diag()
   if self.viewing or self.diag_unsupported then return end
   local empty = not (self.areas_info and #self.areas_info.places > 0)
-  if not (empty or self.ui.diag_open or self.diag == nil) then return end
+  if not (empty or common.diag_open(self.ui) or self.diag == nil) then return end
   local now = self.fb.clock()
   if self.diag_next and now < self.diag_next then return end
   self.diag_next = now + 5000
@@ -322,6 +322,7 @@ function A:tick()
     if not ok then warn_once(self, "poll", "poll failed: " .. tostring(err)) end
   end
   if not self.viewing and self.icons and self.icons:pump(now) then self.dirty = true end
+  if not self.viewing and self.maps and self.maps:files_step(now) then self.dirty = true end
   if self.hud_until and now >= self.hud_until then
     self.hud_until, self.hud_text = nil, nil
     self.dirty = true
@@ -687,7 +688,16 @@ function A:map_action(action, value)
     self.ui.calib = nil
   elseif action == "crop_toggle" then
     self.ui.crop_open = not self.ui.crop_open
-    if self.ui.crop_open and not m.pending then m:preset(m.crop and "applied" or "suggest") end
+    if self.ui.crop_open and not m.pending then m:preset(m.crop and "applied" or "none") end
+  elseif action == "map_src:screen" or action == "map_src:files" then
+    self.ui.map_src = action:sub(9) -- chips carry the value in the action name
+  elseif action == "map_prev" or action == "map_next" then
+    m:files_nav(action == "map_next" and 1 or -1, self.fb.clock())
+  elseif action == "map_use" then
+    if m:files_use() then
+      self.ui.calib = nil
+      self.ui.map_src = nil
+    end
   elseif action == "crop_adj" then
     local side, d = tostring(value):match("^([tblr]):(-?%d+)$")
     if side then m:adjust(side, math.tointeger(tonumber(d))) end
@@ -756,7 +766,7 @@ function A:on_action(action, value, slot)
     self.dirty = true
     self:open_screen()
   elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
-  elseif action == "diag_toggle" then self.ui.diag_open = not self.ui.diag_open; self.diag_next = nil; self.dirty = true
+  elseif action == "diag_toggle" then self.ui.diag_open = not common.diag_open(self.ui); self.diag_next = nil; self.dirty = true
   elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true
@@ -966,16 +976,23 @@ return I
 
 end
 __mod["app.maps"] = function(...)
--- Region map from the game picture: the player opens the map in the game on the 3DS bottom screen and
--- "Take map from screen" captures it with fb.video.capture (permission video.capture, Player 0.11+ with
--- the game picture API). The PNG stays in the own cache of this player (never in the run state):
---   map/<game id>.png   the captured map (empty file = removed)
---   map/current.txt     game id of the last capture (the run view in the shell has no game id)
---   map/coords.json     { map = game id, crop = { t, b, l, r }, routes = { [route key] = { x, y } } } recorded by the player;
+-- Region map, two sources. (1) From the game picture: the player opens the map in the game on the 3DS
+-- bottom screen and "Take map from screen" captures it with fb.video.capture (permission video.capture,
+-- Player 0.11+ with the game picture API). (2) From the game files: pokemon-core `map_candidates()` lists
+-- large images found in the player's own RomFS (nil, "not_ready" while it still scans), `map_image(id)` returns
+-- one as PNG, `map_selected()` is the core's own pick; the player browses them and confirms one. The PNG stays
+-- in the own cache of this player (never in the run state):
+--   map/<game id>.png   the map in use (empty file = removed)
+--   map/current.txt     game id of the last map (the run view in the shell has no game id)
+--   map/cand-<n>.png    preview of file candidate n of the list (overwritten when the list changes)
+--   map/coords.json     { map = game id, crop = { t, b, l, r }, routes = { [route key] = { x, y } },
+--                         source = "files", file = candidate id (only for a map from the game files) };
 --                       crop = percent of the captured screen cut off at top/bottom/left/right when the stored PNG was
---                       taken (the capture rect lies inside the bottom screen, so the PNG is already cropped)
--- Route positions are image pixels of the cropped map. Taking the map again with another crop RESCALES the
--- recorded positions (screen fraction kept) instead of clearing them; without a known old crop it is 0.
+--                       taken (the capture rect lies inside the bottom screen, so the PNG is already cropped);
+--                       0 for a map from the game files
+-- Route positions are image pixels of the stored map. Taking the map again with another crop, or switching the
+-- source, RESCALES the recorded positions (screen fraction kept) instead of clearing them; without a known old
+-- image nothing changes. The default crop is the full screen.
 -- Route positions on the image are our own recorded facts (data.oras.COORDS[game id]) merged under the
 -- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older Player) the
 -- Map tab says so; nothing else depends on it.
@@ -988,6 +1005,8 @@ M.__index = M
 M.COORDS_FILE, M.CURRENT = "map/coords.json", "map/current.txt"
 M.NO_GAME = "game"
 M.SIDES = { "t", "b", "l", "r" }
+M.CORE = "pokemon.core"
+M.SCAN_MS, M.RETRY_MS, M.MAX_CANDIDATES = 3000, 2000, 40
 M.MAX_CROP = 45 -- percent per side; opposite sides together stay below 90
 
 --- Clamp a crop table { t, b, l, r } (percent) to whole numbers 0..MAX_CROP with opposite sides <= 90 together.
@@ -998,13 +1017,6 @@ function M.clean_crop(c)
     out[k] = math.max(0, math.min(M.MAX_CROP, math.floor((v or 0) + 0.5)))
   end
   return out
-end
-
---- Suggested crop of the game in percent (data.oras.map_crop, an estimate), or all zero.
-function M.suggest_crop(game)
-  local f = oras.map_crop(game)
-  if not f then return M.clean_crop({}) end
-  return M.clean_crop({ t = f.top * 100, b = f.bottom * 100, l = f.left * 100, r = f.right * 100 })
 end
 
 --- Width and height from a PNG header, or nil.
@@ -1024,7 +1036,10 @@ function M.new(fb, live)
                               api = type(fb.video) == "table" and type(fb.video.capture) == "function" }, M)
   self.game = (type(code) == "string" and code ~= "") and code or nil
   self:restore()
-  self.edit = self.crop and M.clean_crop(self.crop) or M.suggest_crop(self.game)
+  self.edit = self.crop and M.clean_crop(self.crop) or M.clean_crop({})
+  -- map from the game files: only in a live run and when fb.call exists; the core decides on the first call
+  self.files = { state = (self.live and type(fb.call) == "function") and "idle" or "unsupported", list = {}, idx = 1,
+                 previews = {}, failed = {}, retry = {}, next_at = 0 }
   return self
 end
 
@@ -1053,11 +1068,15 @@ function M:restore()
 end
 
 function M:load_coords()
-  self.coords, self.crop = {}, nil
+  self.coords, self.crop, self.source, self.file_id = {}, nil, nil, nil
   local s = self:read(M.COORDS_FILE)
   if type(s) ~= "string" or not self.id then return end
   local id = s:match('"map"%s*:%s*"(.-)"')
   if id ~= self.id then return end
+  if s:match('"source"%s*:%s*"files"') then
+    self.source, self.file_id = "files", s:match('"file"%s*:%s*"(.-)"')
+    if self.file_id == "" then self.file_id = nil end
+  end
   local cs = s:match('"crop"%s*:%s*(%b{})')
   if cs then
     local c = {}
@@ -1073,7 +1092,9 @@ end
 function M:save_coords()
   local routes = {}
   for key, c in pairs(self.coords) do routes[key] = { x = c.x, y = c.y } end
-  self:write(M.COORDS_FILE, util.encode({ map = self.id, crop = self.crop, routes = routes }))
+  local files = self.source == "files" and self.file_id
+  self:write(M.COORDS_FILE, util.encode({ map = self.id, crop = self.crop, routes = routes,
+    source = files and "files" or nil, file = files or nil }))
 end
 
 --- Route positions: data.oras.COORDS[map id] with the recorded ones on top.
@@ -1147,10 +1168,9 @@ function M:adjust(side, delta)
   return true
 end
 
---- Set the crop being edited: "none" (full screen), "suggest" (data.oras estimate) or "applied" (of the stored map).
+--- Set the crop being edited: "none" (full screen) or "applied" (of the stored map).
 function M:preset(name)
   if name == "none" then self.edit = M.clean_crop({})
-  elseif name == "suggest" then self.edit = M.suggest_crop(self.game)
   elseif name == "applied" then self.edit = self.crop and M.clean_crop(self.crop) or M.clean_crop({})
   else return false end
   return true
@@ -1195,6 +1215,91 @@ function M:on_captured(e)
   self:load_coords()
   self:rescale(old_w, old_h, old_crop, self.pending_crop, w, h)
   self.crop = self.pending_crop
+  self.source, self.file_id = "screen", nil
+  self:save_coords()
+  self.edit = M.clean_crop(self.crop)
+  return true
+end
+
+-- ---------------------------------------------------------------- map from the game files
+
+local function png_ok(png) return type(png) == "string" and M.png_size(png) ~= nil end
+
+--- Ask the core for the candidates (until it is done scanning) and fetch the preview of the shown one.
+--- Called from every tick; returns true when the view changed. A core without the functions (or without
+--- fb.call) turns the option off for good.
+function M:files_step(now)
+  local f = self.files
+  if f.state == "unsupported" then return false end
+  local changed = false
+  if f.state ~= "done" then
+    if now < f.next_at then return false end
+    f.next_at = now + M.SCAN_MS
+    local ok, list, why = pcall(self.fb.call, M.CORE, "map_candidates")
+    if not ok or why == "unsupported" then f.state = "unsupported"; return true end
+    if type(list) ~= "table" then
+      if f.state ~= "scanning" then f.state, changed = "scanning", true end
+      return changed
+    end
+    f.list = {}
+    for _, c in ipairs(list) do
+      if #f.list >= M.MAX_CANDIDATES then break end
+      if type(c) == "table" and type(c.id) == "string" and c.id ~= "" then
+        f.list[#f.list + 1] = { id = c.id, w = math.tointeger(c.w), h = math.tointeger(c.h) }
+      end
+    end
+    f.state, f.idx, f.previews, f.failed, f.retry = "done", 1, {}, {}, {}
+    local oks, sel = pcall(self.fb.call, M.CORE, "map_selected")
+    f.selected = (oks and type(sel) == "string" and sel ~= "") and sel or nil
+    changed = true
+  end
+  local c = f.list[f.idx]
+  if c and not f.previews[c.id] and not f.failed[c.id] and now >= (f.retry[c.id] or 0) then
+    local ok, png, why = pcall(self.fb.call, M.CORE, "map_image", c.id)
+    local name = "map/cand-" .. f.idx .. ".png"
+    if ok and png_ok(png) and self:write(name, png) then
+      f.previews[c.id], changed = name, true
+    elseif ok and why == "not_ready" then
+      f.retry[c.id] = now + M.RETRY_MS
+    else
+      f.failed[c.id], changed = true, true
+    end
+  end
+  return changed
+end
+
+--- Show the previous (-1) or next (1) candidate, wrapping around.
+function M:files_nav(delta, now)
+  local f = self.files
+  local n = #f.list
+  if n == 0 or (delta ~= 1 and delta ~= -1) then return false end
+  f.idx = (f.idx - 1 + delta) % n + 1
+  f.error = nil
+  self:files_step(now or 0)
+  return true
+end
+
+--- Use the shown candidate as the map: the positions move to the new image like a crop change. Returns true on success.
+function M:files_use()
+  local f = self.files
+  local c = f.list[f.idx]
+  f.error = nil
+  if not c then return false end
+  if not self.live or not self.game then f.error = "unsupported"; return false end
+  local png = f.previews[c.id] and self:read(f.previews[c.id]) or nil
+  if not png_ok(png) then
+    local ok, p = pcall(self.fb.call, M.CORE, "map_image", c.id)
+    png = ok and p or nil
+  end
+  local w, h = M.png_size(png)
+  if not w then f.error = "failed"; return false end
+  self.id = self.game
+  local old_w, old_h, old_crop = self.w, self.h, self.crop or M.clean_crop({})
+  if not (self:write(self:file(), png) and self:write(M.CURRENT, self.id)) then f.error = "failed"; return false end
+  self.w, self.h, self.state, self.error = w, h, "ready", nil
+  self:load_coords()
+  self:rescale(old_w, old_h, old_crop, M.clean_crop({}), w, h)
+  self.crop, self.source, self.file_id = M.clean_crop({}), "files", c.id
   self:save_coords()
   self.edit = M.clean_crop(self.crop)
   return true
@@ -1218,13 +1323,32 @@ end
 function M:remove()
   if self.state == "ready" then self:write(self:file(), "") end
   self.w, self.h, self.state, self.error = nil, nil, "none", nil
+  if self.source == "files" then
+    self.source, self.file_id = nil, nil
+    self:save_coords()
+  end
 end
 
---- What the UI needs: { state = none|ready, api, live, pending, error?, src?, w?, h?, id?, coords }.
+--- The candidates for the UI: { avail, state = idle|scanning|done, n, idx, cand = { id, w, h, src?, failed?,
+--- suggested?, current? }, error? }.
+function M:files_view()
+  local f = self.files
+  local out = { avail = f.state ~= "unsupported", state = f.state, n = #f.list, idx = f.idx, error = f.error }
+  local c = f.list[f.idx]
+  if c then
+    local pv = f.previews[c.id]
+    out.cand = { id = c.id, w = c.w, h = c.h, src = pv and ("cache:" .. pv) or nil, failed = f.failed[c.id] or nil,
+      suggested = (f.selected ~= nil and f.selected == c.id) or nil,
+      current = (self.state == "ready" and self.source == "files" and self.file_id == c.id) or nil }
+  end
+  return out
+end
+
+--- What the UI needs: { state = none|ready, api, live, pending, error?, src?, w?, h?, id?, source?, files, coords }.
 function M:view()
   return { state = self.state, id = self.id, w = self.w, h = self.h, api = self.api, live = self.live,
            pending = self.pending ~= nil, error = self.error, crop = self.crop, edit = self.edit,
-           suggest = oras.map_crop(self.game) ~= nil,
+           source = self.source, files = self:files_view(),
            src = self.state == "ready" and ("cache:" .. self:file()) or nil, coords = self:merged() }
 end
 
@@ -1320,17 +1444,6 @@ M.ZONE_TO_ROUTE = M.ZONES -- old name
 --- pixels. Our own recorded facts, EMPTY for now: positions are recorded in the Map tab
 --- ("Place routes") and exported with "Export positions".
 M.COORDS = {}
-
---- Suggested crop of the captured bottom screen for the in-game region map (AreaNav): fractions of the
---- screen cut off at each side. ESTIMATE only (title bar at the top, side panel on the right of the
---- "Karten-Navi" screen), not measured; the player adjusts it in the Map tab ("Crop map").
-M.MAP_CROP = { top = 0.09, bottom = 0, left = 0, right = 0.22 }
-
---- Suggested crop { top, bottom, left, right } (fractions 0..1) for a game id, or nil when there is none.
---- Every game this plugin supports is Omega Ruby / Alpha Sapphire, so the id does not matter yet.
-function M.map_crop(game)
-  return M.MAP_CROP
-end
 
 --- Level cap hint by number of badges owned: LEVEL_CAPS[badges] = cap of the next gym.
 --- VERIFY LOCALLY against the real game before relying on it; hints only, never blocking.
@@ -3320,37 +3433,33 @@ function C.place_options(ctx, selected, want)
   return groups[C.group_of(groups, selected, want)].opts
 end
 
---- Up to two lines "key=value key=value ..." of a flat diagnostics table (pokemon-core diagnostics()),
---- keys sorted, strings cut to 40 characters. Empty list for nil or an empty table.
+--- Lines "key=value key=value ..." of a flat diagnostics table (pokemon-core diagnostics()): every key is
+--- shown, grouped by the text before the first "_" (a key without "_" is its own group), one line per
+--- group, groups and keys sorted, strings cut to 40 characters. Empty list for nil or an empty table.
 function C.diag_lines(d)
   if type(d) ~= "table" then return {} end
   local keys = {}
-  for k in pairs(d) do keys[#keys + 1] = k end
+  for k in pairs(d) do if type(k) == "string" then keys[#keys + 1] = k end end
   table.sort(keys)
-  if #keys > 40 then for i = #keys, 41, -1 do keys[i] = nil end end
-  local parts, total = {}, 0
+  local order, groups = {}, {}
   for _, k in ipairs(keys) do
+    local g = k:match("^([^_]*)_") or k
+    if not groups[g] then groups[g] = {}; order[#order + 1] = g end
     local v = d[k]
     if type(v) == "string" then v = util.clean_text(v, 40) or "" end
-    local part = k .. "=" .. tostring(v)
-    parts[#parts + 1] = part
-    total = total + #part + 1
+    local list = groups[g]
+    list[#list + 1] = k .. "=" .. tostring(v)
   end
-  local lines, cur = {}, {}
-  local half = math.ceil(total / 2)
-  local len = 0
-  for i, part in ipairs(parts) do
-    if #lines == 0 and #cur > 0 and len + #part >= half + 12 then
-      lines[1], cur, len = table.concat(cur, " "), {}, 0
-    end
-    cur[#cur + 1] = part
-    len = len + #part + 1
-  end
-  if #cur > 0 then lines[#lines + 1] = table.concat(cur, " ") end
+  table.sort(order)
+  local lines = {}
+  for _, g in ipairs(order) do lines[#lines + 1] = table.concat(groups[g], " ") end
   return lines
 end
 
---- "Game data" block (diagnostics of the core, one or two key=value lines and a hint), or nil without
+--- The "Game data" block is open unless the player closed it (state kept in ui.diag_open).
+function C.diag_open(ui) return ui == nil or ui.diag_open ~= false end
+
+--- "Game data" block (diagnostics of the core, one wrapped line per key group and a hint), or nil without
 --- diagnostics. `id` makes the block ids unique when it appears twice.
 function C.diag_block(ctx, id)
   local lines = C.diag_lines(ctx.diag)
@@ -3914,8 +4023,8 @@ end
 __mod["ui.screen"] = function(...)
 -- Run screen (design 5e), shown in the `screen` slot (and, read only, in the `run` slot of the Runs page):
 -- frame with tabs Map | Routes | Team & box | Graveyard | Event log. All manual corrections (5f) live here.
--- The Map tab shows the map captured from the game picture (app.maps); until then the Routes tab comes
--- first and the Map tab shows the instruction and the "Take map from screen" button.
+-- The Map tab shows the stored map (app.maps: taken from the game picture or chosen among the images of the
+-- game files); until then the Routes tab comes first and the Map tab offers both sources.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -3982,9 +4091,9 @@ local function header(ctx)
   }
   if rules_open then kids[#kids + 1] = { type = "scroll", id = "rules-scroll", max_height = "s", children = { rules_list(ctx) } } end
   if ctx.diag ~= nil then
-    local open = ctx.ui.diag_open == true
+    local open = common.diag_open(ctx.ui)
     kids[#kids + 1] = { type = "row", id = "head-diag", gap = 8, align = "center", children = {
-      { type = "chip", id = "diag-chip", text = tr("diag_title"), action = "diag_toggle", selected = open } } }
+      { type = "chip", id = "diag-chip", text = tr(open and "diag_hide" or "diag_show"), action = "diag_toggle", selected = open } } }
     local blk = open and common.diag_block(ctx, "diag")
     if blk then kids[#kids + 1] = blk end
   end
@@ -4068,7 +4177,7 @@ local function routes_page(ctx)
   else
     kids[#kids + 1] = { type = "text", id = "routes-empty", text = tr("routes_empty"), style = "meta" }
   end
-  if #(view.places or {}) == 0 and not ctx.ui.diag_open then
+  if #(view.places or {}) == 0 and not common.diag_open(ctx.ui) then
     local blk = common.diag_block(ctx, "routes-diag")
     if blk then kids[#kids + 1] = blk end
   end
@@ -4227,13 +4336,8 @@ local function crop_section(ctx, m)
     end
     kids[#kids + 1] = { type = "row", id = "crop-row-" .. side, gap = 6, align = "center", children = btns }
   end
-  local presets = { { type = "button", id = "crop-none", label = tr("crop_none"), action = "crop_preset", value = "none", variant = "quiet" } }
-  if m.suggest then
-    presets[#presets + 1] = { type = "button", id = "crop-suggest", label = tr("crop_suggest"), action = "crop_preset",
-      value = "suggest", variant = "quiet" }
-  end
-  kids[#kids + 1] = { type = "row", id = "crop-presets", gap = 8, children = presets }
-  if m.suggest then kids[#kids + 1] = { type = "text", id = "crop-estimate", text = tr("crop_estimate"), style = "meta" } end
+  kids[#kids + 1] = { type = "row", id = "crop-presets", gap = 8, children = {
+    { type = "button", id = "crop-none", label = tr("crop_none"), action = "crop_preset", value = "none", variant = "quiet" } } }
   if m.live and m.api then
     kids[#kids + 1] = { type = "button", id = "crop-apply", label = tr(m.state == "ready" and "crop_apply" or "map_take"),
       action = "map_capture", variant = "primary" }
@@ -4261,17 +4365,79 @@ local function capture_block(ctx, m, retake)
   return kids
 end
 
+--- Which source the Map tab shows: "screen" (take from the game picture) or "files" (candidates of the game
+--- files). The player's choice, else the source of the stored map; only sources this Player/core offers.
+local function map_source(ctx, m)
+  local screen_ok = m.api and m.live
+  local files_ok = m.live and m.files and m.files.avail
+  local want = ctx.ui.map_src or m.source
+  if want == "files" and files_ok then return "files", screen_ok, files_ok end
+  if screen_ok then return "screen", screen_ok, files_ok end
+  return files_ok and "files" or "screen", screen_ok, files_ok
+end
+
+--- Source switch: only when both sources exist.
+local function source_row(ctx, src, screen_ok, files_ok)
+  if not (screen_ok and files_ok) then return nil end
+  local tr = ctx.tr
+  return { type = "row", id = "map-src", gap = 8, align = "center", children = {
+    { type = "chip", id = "msrc-screen", text = tr("map_src_screen"), action = "map_src:screen", selected = src == "screen" },
+    { type = "chip", id = "msrc-files", text = tr("map_src_files"), action = "map_src:files", selected = src == "files" } } }
+end
+
+--- Browse the images the core found in the game files: "n of N", preview, previous / next, "Use this map".
+local function files_section(ctx, m)
+  local tr, f = ctx.tr, m.files
+  local kids = { { type = "text", id = "mf-hint", text = tr("map_files_hint"), style = "meta" } }
+  if f.state ~= "done" then
+    kids[#kids + 1] = { type = "text", id = "mf-wait", text = tr("map_files_searching"), style = "meta" }
+  elseif f.n == 0 or not f.cand then
+    kids[#kids + 1] = { type = "text", id = "mf-none", text = tr("map_files_none"), style = "meta" }
+  else
+    local c = f.cand
+    local size = (c.w and c.h) and tr("map_files_size", { w = c.w, h = c.h }) or ""
+    kids[#kids + 1] = { type = "text", id = "mf-pos", style = "body",
+      text = tr("map_files_pos", { n = f.idx, total = f.n }) .. (size ~= "" and (" · " .. size) or "") }
+    if c.src then
+      kids[#kids + 1] = { type = "image", id = "mf-img", src = c.src, size = "l", label = tr("map_files_pos", { n = f.idx, total = f.n }) }
+    else
+      kids[#kids + 1] = { type = "text", id = "mf-load", style = "meta", text = tr(c.failed and "map_files_failed" or "map_files_loading") }
+    end
+    if c.suggested then kids[#kids + 1] = { type = "text", id = "mf-sug", text = tr("map_files_suggested"), style = "meta" } end
+    if c.current then kids[#kids + 1] = { type = "text", id = "mf-cur", text = tr("map_files_current"), style = "meta" } end
+    local row = {}
+    if f.n > 1 then
+      row[#row + 1] = { type = "button", id = "mf-prev", label = tr("map_files_prev"), action = "map_prev", variant = "secondary" }
+      row[#row + 1] = { type = "button", id = "mf-next", label = tr("map_files_next"), action = "map_next", variant = "secondary" }
+    end
+    if c.src and not c.current then
+      row[#row + 1] = { type = "button", id = "mf-use", label = tr("map_files_use"), action = "map_use", variant = "primary" }
+    end
+    if #row > 0 then kids[#kids + 1] = { type = "row", id = "mf-row", gap = 8, children = row } end
+  end
+  if f.error then
+    kids[#kids + 1] = { type = "text", id = "mf-error", style = "meta",
+      text = tr("map_err_" .. (MAP_ERRORS[f.error] and f.error or "failed")) }
+  end
+  return { type = "section", id = "mapfiles", title = tr("map_src_files"), children = kids }
+end
+
 local function map_page(ctx)
   local view, m, tr = ctx.view, ctx.map, ctx.tr
+  local src, screen_ok, files_ok = map_source(ctx, m)
+  local switch = source_row(ctx, src, screen_ok, files_ok)
   if m.state ~= "ready" then
-    -- no image yet: empty state (5e), instruction and the capture button; older Player: update hint
-    if not m.api then
+    -- no image yet: empty state (5e), then the chosen source; older Player and no files: update hint
+    if not screen_ok and not files_ok then
       return { type = "column", id = "page-map", gap = 12, children = {
-        { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_no_api") } } }
+        { type = "empty", id = "map-empty", title = tr("map_title"), text = tr(m.api and "map_empty_text" or "map_no_api") } } }
     end
     local kids = { { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_empty_text") } }
-    for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
-    if m.live then
+    kids[#kids + 1] = switch
+    if src == "files" then
+      kids[#kids + 1] = files_section(ctx, m)
+    else
+      for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
       kids[#kids + 1] = { type = "row", id = "map-take-row", gap = 8, children = {
         { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture", variant = "primary" },
         { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
@@ -4317,18 +4483,21 @@ local function map_page(ctx)
   if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
   local acts = { { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
     variant = calib and "primary" or "quiet" } }
-  if m.live and m.api then
+  if screen_ok then
     acts[#acts + 1] = { type = "button", id = "map-retake", label = tr("map_retake"), action = "map_capture", variant = "quiet" }
-  end
-  if m.live and m.api then
     acts[#acts + 1] = { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
       variant = ctx.ui.crop_open and "primary" or "quiet" }
   end
   acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
     confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
   local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
-  for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
-  if ctx.ui.crop_open and m.live and m.api then kids[#kids + 1] = crop_section(ctx, m) end
+  kids[#kids + 1] = switch
+  if src == "files" then
+    kids[#kids + 1] = files_section(ctx, m)
+  else
+    for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
+  end
+  if ctx.ui.crop_open and screen_ok then kids[#kids + 1] = crop_section(ctx, m) end
   if calib then kids[#kids + 1] = calibration(ctx, m) end
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end

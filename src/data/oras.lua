@@ -22,17 +22,6 @@ M.ZONE_TO_ROUTE = M.ZONES -- old name
 --- ("Place routes") and exported with "Export positions".
 M.COORDS = {}
 
---- Suggested crop of the captured bottom screen for the in-game region map (AreaNav): fractions of the
---- screen cut off at each side. ESTIMATE only (title bar at the top, side panel on the right of the
---- "Karten-Navi" screen), not measured; the player adjusts it in the Map tab ("Crop map").
-M.MAP_CROP = { top = 0.09, bottom = 0, left = 0, right = 0.22 }
-
---- Suggested crop { top, bottom, left, right } (fractions 0..1) for a game id, or nil when there is none.
---- Every game this plugin supports is Omega Ruby / Alpha Sapphire, so the id does not matter yet.
-function M.map_crop(game)
-  return M.MAP_CROP
-end
-
 --- Level cap hint by number of badges owned: LEVEL_CAPS[badges] = cap of the next gym.
 --- VERIFY LOCALLY against the real game before relying on it; hints only, never blocking.
 M.LEVEL_CAPS = { [0] = 15, 19, 24, 29, 31, 33, 42, 43 }

@@ -113,37 +113,33 @@ function C.place_options(ctx, selected, want)
   return groups[C.group_of(groups, selected, want)].opts
 end
 
---- Up to two lines "key=value key=value ..." of a flat diagnostics table (pokemon-core diagnostics()),
---- keys sorted, strings cut to 40 characters. Empty list for nil or an empty table.
+--- Lines "key=value key=value ..." of a flat diagnostics table (pokemon-core diagnostics()): every key is
+--- shown, grouped by the text before the first "_" (a key without "_" is its own group), one line per
+--- group, groups and keys sorted, strings cut to 40 characters. Empty list for nil or an empty table.
 function C.diag_lines(d)
   if type(d) ~= "table" then return {} end
   local keys = {}
-  for k in pairs(d) do keys[#keys + 1] = k end
+  for k in pairs(d) do if type(k) == "string" then keys[#keys + 1] = k end end
   table.sort(keys)
-  if #keys > 40 then for i = #keys, 41, -1 do keys[i] = nil end end
-  local parts, total = {}, 0
+  local order, groups = {}, {}
   for _, k in ipairs(keys) do
+    local g = k:match("^([^_]*)_") or k
+    if not groups[g] then groups[g] = {}; order[#order + 1] = g end
     local v = d[k]
     if type(v) == "string" then v = util.clean_text(v, 40) or "" end
-    local part = k .. "=" .. tostring(v)
-    parts[#parts + 1] = part
-    total = total + #part + 1
+    local list = groups[g]
+    list[#list + 1] = k .. "=" .. tostring(v)
   end
-  local lines, cur = {}, {}
-  local half = math.ceil(total / 2)
-  local len = 0
-  for i, part in ipairs(parts) do
-    if #lines == 0 and #cur > 0 and len + #part >= half + 12 then
-      lines[1], cur, len = table.concat(cur, " "), {}, 0
-    end
-    cur[#cur + 1] = part
-    len = len + #part + 1
-  end
-  if #cur > 0 then lines[#lines + 1] = table.concat(cur, " ") end
+  table.sort(order)
+  local lines = {}
+  for _, g in ipairs(order) do lines[#lines + 1] = table.concat(groups[g], " ") end
   return lines
 end
 
---- "Game data" block (diagnostics of the core, one or two key=value lines and a hint), or nil without
+--- The "Game data" block is open unless the player closed it (state kept in ui.diag_open).
+function C.diag_open(ui) return ui == nil or ui.diag_open ~= false end
+
+--- "Game data" block (diagnostics of the core, one wrapped line per key group and a hint), or nil without
 --- diagnostics. `id` makes the block ids unique when it appears twice.
 function C.diag_block(ctx, id)
   local lines = C.diag_lines(ctx.diag)

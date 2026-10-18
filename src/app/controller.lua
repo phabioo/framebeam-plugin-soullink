@@ -175,12 +175,12 @@ function A:refresh_areas()
 end
 
 --- Game data diagnostics of pokemon-core >= 0.3.2 (`diagnostics()`, a flat table of numbers and strings), only
---- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open. A core
+--- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open (it is open until the player closes it). A core
 --- without it (unsupported) leaves self.diag nil and the block is omitted.
 function A:refresh_diag()
   if self.viewing or self.diag_unsupported then return end
   local empty = not (self.areas_info and #self.areas_info.places > 0)
-  if not (empty or self.ui.diag_open or self.diag == nil) then return end
+  if not (empty or common.diag_open(self.ui) or self.diag == nil) then return end
   local now = self.fb.clock()
   if self.diag_next and now < self.diag_next then return end
   self.diag_next = now + 5000
@@ -304,6 +304,7 @@ function A:tick()
     if not ok then warn_once(self, "poll", "poll failed: " .. tostring(err)) end
   end
   if not self.viewing and self.icons and self.icons:pump(now) then self.dirty = true end
+  if not self.viewing and self.maps and self.maps:files_step(now) then self.dirty = true end
   if self.hud_until and now >= self.hud_until then
     self.hud_until, self.hud_text = nil, nil
     self.dirty = true
@@ -669,7 +670,16 @@ function A:map_action(action, value)
     self.ui.calib = nil
   elseif action == "crop_toggle" then
     self.ui.crop_open = not self.ui.crop_open
-    if self.ui.crop_open and not m.pending then m:preset(m.crop and "applied" or "suggest") end
+    if self.ui.crop_open and not m.pending then m:preset(m.crop and "applied" or "none") end
+  elseif action == "map_src:screen" or action == "map_src:files" then
+    self.ui.map_src = action:sub(9) -- chips carry the value in the action name
+  elseif action == "map_prev" or action == "map_next" then
+    m:files_nav(action == "map_next" and 1 or -1, self.fb.clock())
+  elseif action == "map_use" then
+    if m:files_use() then
+      self.ui.calib = nil
+      self.ui.map_src = nil
+    end
   elseif action == "crop_adj" then
     local side, d = tostring(value):match("^([tblr]):(-?%d+)$")
     if side then m:adjust(side, math.tointeger(tonumber(d))) end
@@ -738,7 +748,7 @@ function A:on_action(action, value, slot)
     self.dirty = true
     self:open_screen()
   elseif action == "place_toggle" then self.ui.place_open = not self.ui.place_open; self.dirty = true
-  elseif action == "diag_toggle" then self.ui.diag_open = not self.ui.diag_open; self.diag_next = nil; self.dirty = true
+  elseif action == "diag_toggle" then self.ui.diag_open = not common.diag_open(self.ui); self.diag_next = nil; self.dirty = true
   elseif action == "rules_toggle" then self.ui.rules_open = not self.ui.rules_open; self.dirty = true
   elseif action == "grave_toggle" then self.ui.grave_open = not self.ui.grave_open; self.dirty = true
   elseif action == "hud_toggle" then self.ui.hud_expanded = not self.ui.hud_expanded; self.dirty = true

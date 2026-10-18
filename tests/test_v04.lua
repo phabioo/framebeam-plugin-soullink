@@ -246,7 +246,7 @@ t.case("screen: map tab shows an image only after the map was taken from the scr
   t.eq(sel.options[1].value, "loc:400", "calibration offers every place, towns included")
   e.act("calib_route", "loc:302")
   e.act("calib_set")
-  t.eq(e.m.cache_files["map/coords.json"], '{"crop":{"b":0,"l":0,"r":22,"t":9},"map":"000400000011C400","routes":{"loc:302":{"x":160,"y":120}}}')
+  t.eq(e.m.cache_files["map/coords.json"], '{"crop":{"b":0,"l":0,"r":0,"t":0},"map":"000400000011C400","routes":{"loc:302":{"x":160,"y":120}}}')
 end)
 
 -- ---------------------------------------------------------------- routes from the game

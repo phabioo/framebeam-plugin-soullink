@@ -80,26 +80,38 @@ end)
 
 -- ---------------------------------------------------------------- 2. diagnostics
 
-t.case("diagnostics: Game data toggle shows key=value lines, at most two", function()
+t.case("diagnostics: Game data block is open by default, one wrapped line per key group, toggle keeps its state", function()
   local e = boot()
   e.step(); e.step(6000)
-  t.ok(e.find("diag-chip"), "toggle present with a core that has diagnostics()")
-  t.eq(e.find("diag-1"), nil, "collapsed")
-  e.act("diag_toggle")
-  e.step(6000)
+  local chip = e.find("diag-chip")
+  t.ok(chip, "toggle present with a core that has diagnostics()")
+  t.eq(chip.text, "Hide game data", "clearly labelled")
+  t.eq(chip.selected, true)
+  -- groups by prefix: areas, first, ids, language, lines, locations, revision, text, zo, zone, zones
   local l1 = e.find("diag-1")
-  t.ok(l1.text:find("areas=3", 1, true) and l1.text:find("language=en", 1, true), "key=value pairs, sorted")
-  t.ok(e.find("diag-2").text:find("zone_files=3", 1, true))
-  t.eq(e.find("diag-3"), nil, "two lines at most")
+  t.ok(l1 and l1.wrap == true, "wrapped line")
+  t.eq(l1.text, "areas=3")
   t.ok(e.find("diag-hint"))
+  local found = {}
+  for i = 1, 20 do local l = e.find("diag-" .. i); if l then found[#found + 1] = l.text end end
+  local all = table.concat(found, " | ")
+  t.ok(all:find("zone_files=3", 1, true) and all:find("zones_state=ready zones_with_encounters=40", 1, true), "every key shown")
   e.act("diag_toggle")
-  t.eq(e.find("diag"), nil, "collapsed again")
+  t.eq(e.find("diag-1"), nil, "closed")
+  t.eq(e.find("diag-chip").text, "Show game data")
+  e.step(6000); e.step(6000)
+  t.eq(e.find("diag-1"), nil, "stays closed across refreshes")
+  e.act("diag_toggle")
+  t.ok(e.find("diag-1"), "open again")
+  e.step(6000); e.step(6000)
+  t.ok(e.find("diag-1"), "stays open across refreshes")
 end)
 
 t.case("diagnostics: shown in the Routes tab while the place list is empty", function()
   local e = boot({ world = { areas = {}, locations = {} }, setup = function(c)
     c:off("areas", "not_ready"); c:off("locations", "not_ready") end })
   e.step(); e.step(6000)
+  e.act("diag_toggle") -- closed on the overview: the Routes tab shows it while no places are known
   t.ok(e.find("routes-diag-1"), "block in the Routes tab")
   e.core:on("areas"); e.core:on("locations")
   e.core.world.areas = { { id = 301, name = "Synthetic Area One", zones = { 10 }, encounters = {} } }
@@ -118,12 +130,28 @@ t.case("diagnostics: an older core without diagnostics() shows no block and no t
   t.eq(e.find("diag-1"), nil)
 end)
 
-t.case("diagnostics: lines are flat, sorted and cut", function()
+t.case("diagnostics: every key is shown, grouped by prefix, sorted, strings cut", function()
   local lines = common.diag_lines({ b = 2, a = "x", c = string.rep("z", 100), d = true })
-  t.ok(#lines >= 1 and #lines <= 2)
-  t.ok(lines[1]:find("^a=x b=2"))
+  t.eq(#lines, 4, "keys without a prefix are their own group")
+  t.eq(lines[1], "a=x")
   t.ok(not table.concat(lines, " "):find(string.rep("z", 41), 1, true))
   t.eq(common.diag_lines(nil), {})
+  local d, n = {}, 0
+  for _, p in ipairs({ "icons", "icon_e1", "icon_e25", "icon_e700", "text", "personal", "zone" }) do
+    for i = 1, 12 do d[p .. "_k" .. string.format("%02d", i)] = i; n = n + 1 end
+  end
+  d.text_first_rejection = "bad"; n = n + 1
+  t.ok(n > 40)
+  lines = common.diag_lines(d)
+  -- the prefix is the text before the first "_": icons, icon, text, personal, zone
+  t.eq(#lines, 5)
+  t.ok(lines[1]:find("^icon_e1_k01=1 "), "sorted within the group")
+  local joined = table.concat(lines, " ")
+  local count = 0
+  for _ in joined:gmatch("=") do count = count + 1 end
+  t.eq(count, n, "no key dropped")
+  t.ok(joined:find("text_first_rejection=bad", 1, true))
+  t.eq(common.diag_lines({ "x" }), {}, "non-string keys are ignored")
 end)
 
 -- ---------------------------------------------------------------- 3. map crop
@@ -136,49 +164,58 @@ t.case("crop: capture rect inside the bottom screen, steppers and presets stay w
   e.step(); e.step(6000)
   e.act("tab", 2)
   e.act("crop_toggle")
-  t.eq(e.find("crop-vt").text, "Top 9 %", "ORAS estimate preselected")
-  t.eq(e.find("crop-vr").text, "Right 22 %")
-  e.act("crop_adj", "t:5"); e.act("crop_adj", "r:-1"); e.act("crop_adj", "l:1")
-  t.eq(e.app.maps.edit, { t = 14, b = 0, l = 1, r = 21 })
+  t.eq(e.find("crop-vt").text, "Top 0 %", "default crop = full screen")
+  t.eq(e.find("crop-vr").text, "Right 0 %")
+  t.eq(e.find("crop-suggest"), nil, "no estimated default any more")
+  e.act("crop_adj", "t:5"); e.act("crop_adj", "r:5"); e.act("crop_adj", "l:1"); e.act("crop_adj", "r:-1")
+  t.eq(e.app.maps.edit, { t = 5, b = 0, l = 1, r = 4 })
   for _ = 1, 20 do e.act("crop_adj", "b:5") end
   t.eq(e.app.maps.edit.b, 45, "limited to 45 percent")
   e.act("crop_adj", "q:5"); e.act("crop_adj", "t:x")
   e.act("crop_preset", "none")
   t.eq(e.app.maps.edit, { t = 0, b = 0, l = 0, r = 0 })
   e.act("crop_preset", "suggest")
-  e.act("crop_adj", "t:1")
+  t.eq(e.app.maps.edit, { t = 0, b = 0, l = 0, r = 0 }, "unknown preset ignored")
+  e.act("crop_adj", "t:10"); e.act("crop_adj", "r:5")
   e.act("map_capture")
-  t.eq(e.m.video.requests[1].target, { x = 40, y = 264, w = 250, h = 216 }, "10 % top, 22 % right of the bottom screen")
-  e.m.video_result(true, png(250, 216), 250, 216)
+  t.eq(e.m.video.requests[1].target, { x = 40, y = 264, w = 304, h = 216 }, "10 % top, 5 % right of the bottom screen")
+  e.m.video_result(true, png(304, 216), 304, 216)
   e.step(300)
   t.ok(e.m.cache_files["map/coords.json"] == nil or e.m.cache_files["map/coords.json"]:find('"t":10', 1, true))
+end)
+
+t.case("crop: the first capture takes the full screen", function()
+  local e = boot()
+  e.step(); e.step(6000)
+  e.act("tab", 2)
+  e.act("map_capture")
+  t.eq(e.m.video.requests[1].target, { x = 40, y = 240, w = 320, h = 240 })
 end)
 
 t.case("crop: Crop map is offered with the map and retaking with a new crop rescales positions", function()
   local e = boot()
   e.step(); e.step(6000)
-  e.take(250, 219) -- suggestion: top 9 %, right 22 %
+  e.take(320, 240)
   e.act("tab", 1)
   t.ok(e.find("map-crop"), "Crop map offered after the capture")
   e.act("calib_toggle")
   e.act("calib_route", "loc:302")
-  e.app.ui.calib.x, e.app.ui.calib.y = 125, 100
+  e.app.ui.calib.x, e.app.ui.calib.y = 160, 120
   e.act("calib_set")
   e.act("calib_toggle")
   e.act("crop_toggle")
-  t.eq(e.app.maps.edit.t, 9, "edits start from the crop of the stored map")
-  e.act("crop_preset", "none")
+  t.eq(e.app.maps.edit.t, 0, "edits start from the crop of the stored map")
+  e.act("crop_adj", "t:10")
   t.ok(e.find("crop-apply") and e.find("crop-rescale"))
-  e.act("crop_apply")
   e.act("map_capture")
-  t.eq(e.m.video.requests[2].target, { x = 40, y = 240, w = 320, h = 240 }, "full bottom screen")
-  e.m.video_result(true, png(320, 240), 320, 240)
+  t.eq(e.m.video.requests[2].target, { x = 40, y = 264, w = 320, h = 216 }, "10 % off the top")
+  e.m.video_result(true, png(320, 216), 320, 216)
   e.step(300)
   local c = e.app.maps:merged()["loc:302"]
-  -- screen fraction 0.39 / 0.5055 stays: x = 0.39 * 320, y = 0.5055 * 240
-  t.eq(c.x, 125); t.eq(c.y, 121)
+  -- screen fraction (0.5, 0.5) stays: x = 0.5 * 320, y = (0.5 - 0.1) / 0.9 * 216
+  t.eq(c.x, 160); t.eq(c.y, 96)
   t.eq(e.m.cache_files["map/coords.json"],
-    '{"crop":{"b":0,"l":0,"r":0,"t":0},"map":"000400000011C400","routes":{"loc:302":{"x":125,"y":121}}}')
+    '{"crop":{"b":0,"l":0,"r":0,"t":10},"map":"000400000011C400","routes":{"loc:302":{"x":160,"y":96}}}')
 end)
 
 t.case("crop: stored crop survives a restart, malformed values are cleaned", function()
