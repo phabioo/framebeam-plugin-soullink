@@ -136,8 +136,8 @@ function C.diag_lines(d)
   return lines
 end
 
---- The "Game data" block is open unless the player closed it (state kept in ui.diag_open).
-function C.diag_open(ui) return ui == nil or ui.diag_open ~= false end
+--- The "Game data" block is closed until the player opens it with the chip (state kept in ui.diag_open).
+function C.diag_open(ui) return ui ~= nil and ui.diag_open == true end
 
 --- "Game data" block (diagnostics of the core, one wrapped line per key group and a hint), or nil without
 --- diagnostics. `id` makes the block ids unique when it appears twice.

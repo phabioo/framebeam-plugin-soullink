@@ -1,7 +1,7 @@
 {
   "id": "net.framebeam.soullink",
   "name": "SoulLink & Nuzlocke",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "api": 1,
   "type": "script",
   "requires": { "net.framebeam.pokemon-core": ">=0.3.1" },

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.6.0 (map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.6.1 (map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -29,7 +29,11 @@ Status: v0.6.0 (map from the game files or the game picture, full-screen default
 ## v0.6.0 map from the game files
 
 - Map tab source choice: "Take map from screen" (default crop is the full screen, the estimated ORAS crop was wrong and is gone) or "From game files": browse the images pokemon-core found in the player's own RomFS (`map_candidates()`, preview from `map_image(id)`, "Image n of N", previous / next, "Use this map", "still searching" while the core scans). The chosen id is stored per game with the map; positions are rescaled when the source or crop changes. Hidden for a core without these functions.
-- Game data block: every diagnostics key, grouped by prefix (one wrapped line per group); open by default, chip "Hide game data" / "Show game data", state kept across refreshes.
+- Game data block: every diagnostics key, grouped by prefix (one wrapped line per group); closed by default in 0.6.1, chip "Show game data" / "Hide game data", state kept across refreshes.
+
+## v0.6.1 Game data closed by default
+
+- The "Game data" block is closed by default again; the chip "Show game data" opens it and the choice is kept across refreshes. Grouping by key prefix and the no-cap behaviour are unchanged.
 
 ## Later
 
