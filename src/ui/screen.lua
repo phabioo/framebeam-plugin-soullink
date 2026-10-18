@@ -67,6 +67,13 @@ local function header(ctx)
     } },
   }
   if rules_open then kids[#kids + 1] = { type = "scroll", id = "rules-scroll", max_height = "s", children = { rules_list(ctx) } } end
+  if ctx.diag ~= nil then
+    local open = ctx.ui.diag_open == true
+    kids[#kids + 1] = { type = "row", id = "head-diag", gap = 8, align = "center", children = {
+      { type = "chip", id = "diag-chip", text = tr("diag_title"), action = "diag_toggle", selected = open } } }
+    local blk = open and common.diag_block(ctx, "diag")
+    if blk then kids[#kids + 1] = blk end
+  end
   return { type = "column", id = "head", gap = 8, children = kids }
 end
 
@@ -146,6 +153,10 @@ local function routes_page(ctx)
     kids[#kids + 1] = { type = "table", id = "routes-table", columns = columns, rows = rows }
   else
     kids[#kids + 1] = { type = "text", id = "routes-empty", text = tr("routes_empty"), style = "meta" }
+  end
+  if #(view.places or {}) == 0 and not ctx.ui.diag_open then
+    local blk = common.diag_block(ctx, "routes-diag")
+    if blk then kids[#kids + 1] = blk end
   end
   local d = route_detail(ctx)
   if d then kids[#kids + 1] = d end
@@ -251,20 +262,23 @@ local STEPS = { 2, 10, 40 }
 
 local function calibration(ctx, m)
   local tr, c = ctx.tr, ctx.ui.calib
-  local opts = {}
-  local is_area = {}
-  for _, id in ipairs(ctx.view.areas or {}) do is_area[oras.area_key(id)] = true end
-  for _, o in ipairs(common.route_options(ctx, nil, c.route)) do
-    if oras.is_route(o.value) and (is_area[o.value] or not oras.area_id(o.value)) then opts[#opts + 1] = o end
-  end
+  local groups = common.place_groups(ctx, c.route)
+  local gi = common.group_of(groups, c.route, c.group)
+  local opts = groups[gi].opts
   local steps = {}
   for _, n in ipairs(STEPS) do steps[#steps + 1] = { value = n, label = tr("calib_px", { n = n }) } end
   local kids = {
     { type = "text", id = "calib-hint", text = tr("calib_hint"), style = "meta" },
-    { type = "select", id = "calib-route", options = #opts > 0 and opts or { { value = "", label = tr("place_none") } },
+    { type = "select", id = "calib-route", options = #opts > 0 and opts or { { value = "", label = tr("calib_no_places") } },
       selected = c.route or "", action = "calib_route" },
     { type = "segmented", id = "calib-step", options = steps, selected = c.step or 10, action = "calib_step" },
   }
+  if #groups > 1 then
+    local gopts = {}
+    for i, g in ipairs(groups) do gopts[i] = { value = i, label = tr("calib_group", { a = g.first, b = g.last }) } end
+    table.insert(kids, 2, { type = (#groups <= 3) and "segmented" or "select", id = "calib-group", options = gopts,
+      selected = gi, action = "calib_group" })
+  end
   if c.x then
     kids[#kids + 1] = { type = "text", id = "calib-pos", text = tr("calib_pos", { x = c.x, y = c.y }), style = "meta" }
     kids[#kids + 1] = { type = "row", id = "calib-arrows", gap = 8, children = {
@@ -281,6 +295,37 @@ local function calibration(ctx, m)
     { type = "button", id = "calib-done", label = tr("calib_done"), action = "calib_toggle", variant = "quiet" },
   } }
   return { type = "section", id = "calib", title = tr("calib_title"), children = kids }
+end
+
+local SIDE_KEYS = { t = "crop_top", b = "crop_bottom", l = "crop_left", r = "crop_right" }
+
+--- Crop of the map: per side the percent of the captured screen that is cut off (-5 -1 +1 +5), presets, and
+--- the button that takes the map again with this crop (the stored picture is cropped at the capture).
+local function crop_section(ctx, m)
+  local tr = ctx.tr
+  local e = m.edit or { t = 0, b = 0, l = 0, r = 0 }
+  local kids = { { type = "text", id = "crop-hint", text = tr("crop_hint"), style = "meta" } }
+  for _, side in ipairs({ "t", "b", "l", "r" }) do
+    local btns = { { type = "text", id = "crop-v" .. side, text = tr(SIDE_KEYS[side], { n = e[side] }), style = "body" } }
+    for _, d in ipairs({ -5, -1, 1, 5 }) do
+      btns[#btns + 1] = { type = "button", id = "crop-" .. side .. (d < 0 and "m" or "p") .. math.abs(d),
+        label = (d > 0 and "+" or "−") .. math.abs(d), action = "crop_adj", value = side .. ":" .. d, variant = "secondary" }
+    end
+    kids[#kids + 1] = { type = "row", id = "crop-row-" .. side, gap = 6, align = "center", children = btns }
+  end
+  local presets = { { type = "button", id = "crop-none", label = tr("crop_none"), action = "crop_preset", value = "none", variant = "quiet" } }
+  if m.suggest then
+    presets[#presets + 1] = { type = "button", id = "crop-suggest", label = tr("crop_suggest"), action = "crop_preset",
+      value = "suggest", variant = "quiet" }
+  end
+  kids[#kids + 1] = { type = "row", id = "crop-presets", gap = 8, children = presets }
+  if m.suggest then kids[#kids + 1] = { type = "text", id = "crop-estimate", text = tr("crop_estimate"), style = "meta" } end
+  if m.live and m.api then
+    kids[#kids + 1] = { type = "button", id = "crop-apply", label = tr(m.state == "ready" and "crop_apply" or "map_take"),
+      action = "map_capture", variant = "primary" }
+  end
+  if m.state == "ready" then kids[#kids + 1] = { type = "text", id = "crop-rescale", text = tr("crop_rescale"), style = "meta" } end
+  return { type = "section", id = "crop", title = tr("crop_title"), children = kids }
 end
 
 local MAP_ERRORS = { busy = true, rate_limited = true, no_frame = true, unknown_screen = true, invalid_rect = true,
@@ -313,8 +358,11 @@ local function map_page(ctx)
     local kids = { { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_empty_text") } }
     for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
     if m.live then
-      kids[#kids + 1] = { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture",
-        variant = "primary" }
+      kids[#kids + 1] = { type = "row", id = "map-take-row", gap = 8, children = {
+        { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture", variant = "primary" },
+        { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
+          variant = ctx.ui.crop_open and "primary" or "quiet" } } }
+      if ctx.ui.crop_open then kids[#kids + 1] = crop_section(ctx, m) end
     end
     return { type = "column", id = "page-map", gap = 12, children = kids }
   end
@@ -358,10 +406,15 @@ local function map_page(ctx)
   if m.live and m.api then
     acts[#acts + 1] = { type = "button", id = "map-retake", label = tr("map_retake"), action = "map_capture", variant = "quiet" }
   end
+  if m.live and m.api then
+    acts[#acts + 1] = { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
+      variant = ctx.ui.crop_open and "primary" or "quiet" }
+  end
   acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
     confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
   local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
   for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
+  if ctx.ui.crop_open and m.live and m.api then kids[#kids + 1] = crop_section(ctx, m) end
   if calib then kids[#kids + 1] = calibration(ctx, m) end
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end

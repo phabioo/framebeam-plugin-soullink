@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.5.0 (map from the game picture, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.5.1 (place picker with every place, Game data diagnostics, map crop; map from the game picture, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 

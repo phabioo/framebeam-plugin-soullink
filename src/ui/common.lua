@@ -45,6 +45,115 @@ function C.place_value(place)
   return nil
 end
 
+--- The view entry of player `id`, or nil.
+function C.player(view, id)
+  for _, p in ipairs(view and view.players or {}) do if p.id == id then return p end end
+  return nil
+end
+
+C.GROUP_SIZE = 90
+
+--- Places a position can be set for, as groups of at most GROUP_SIZE route options (a select holds at most
+--- 100): every place of the game (towns and caves too, view.places), the encounter areas, places used in the
+--- run, the players' current places and `selected`; no starter. With up to 100 places there is one group.
+--- Otherwise the first group holds the selected key, the places used in the run and the current places, filled
+--- up in game order; the others follow in game order. Each group is sorted in game order and carries
+--- `first`/`last`, the ordinals of its places in that sequence ("Places 1-90").
+--- Returns { { opts = { {value, label} }, first, last }, ... } (one empty group when nothing is known).
+function C.place_groups(ctx, selected)
+  local view = ctx.view
+  local prio, rest, seen = {}, {}, {}
+  local function add(list, key)
+    if key and oras.is_route(key) and not seen[key] then seen[key] = true; list[#list + 1] = key end
+  end
+  local known = {}
+  for _, id in ipairs(view.places or {}) do known[oras.area_key(id) or false] = true end
+  for _, id in ipairs(view.areas or {}) do known[oras.area_key(id) or false] = true end
+  for _, r in ipairs(view.rows or {}) do add(prio, r.route) end
+  for _, p in ipairs(view.players or {}) do add(prio, C.place_value(p.place)) end
+  -- the selected key only joins the first group when the game does not list it (groups stay stable)
+  if selected and not known[selected] then add(prio, selected) end
+  for _, id in ipairs(view.places or view.areas or {}) do add(rest, oras.area_key(id)) end
+  for _, id in ipairs(view.areas or {}) do add(rest, oras.area_key(id)) end
+  local function cmp(x, y) return oras.compare(x, y, view.order) end
+  local seq = {}
+  if #prio + #rest <= C.MAX_OPTIONS then
+    for _, k in ipairs(prio) do seq[#seq + 1] = k end
+    for _, k in ipairs(rest) do seq[#seq + 1] = k end
+    table.sort(seq, cmp)
+  else
+    table.sort(prio, cmp)
+    for _, k in ipairs(prio) do seq[#seq + 1] = k end
+    for _, k in ipairs(rest) do seq[#seq + 1] = k end
+  end
+  local size = #seq <= C.MAX_OPTIONS and math.max(#seq, 1) or math.max(C.GROUP_SIZE, #prio + 1)
+  local groups = {}
+  for i = 1, math.max(#seq, 1), size do
+    local keys = {}
+    for j = i, math.min(i + size - 1, #seq) do keys[#keys + 1] = seq[j] end
+    table.sort(keys, cmp)
+    local opts = {}
+    for _, k in ipairs(keys) do opts[#opts + 1] = { value = k, label = C.route_label(ctx, k) } end
+    groups[#groups + 1] = { opts = opts, first = i, last = math.min(i + size - 1, #seq) }
+  end
+  return groups
+end
+
+--- Index of the group that holds `key`, else `want` (when valid), else 1.
+function C.group_of(groups, key, want)
+  for i, g in ipairs(groups) do
+    for _, o in ipairs(g.opts) do if o.value == key then return i end end
+  end
+  return (want and groups[want]) and want or 1
+end
+
+--- Options of the active group (see place_groups); the plain list when everything fits one select.
+function C.place_options(ctx, selected, want)
+  local groups = C.place_groups(ctx, selected)
+  return groups[C.group_of(groups, selected, want)].opts
+end
+
+--- Up to two lines "key=value key=value ..." of a flat diagnostics table (pokemon-core diagnostics()),
+--- keys sorted, strings cut to 40 characters. Empty list for nil or an empty table.
+function C.diag_lines(d)
+  if type(d) ~= "table" then return {} end
+  local keys = {}
+  for k in pairs(d) do keys[#keys + 1] = k end
+  table.sort(keys)
+  if #keys > 40 then for i = #keys, 41, -1 do keys[i] = nil end end
+  local parts, total = {}, 0
+  for _, k in ipairs(keys) do
+    local v = d[k]
+    if type(v) == "string" then v = util.clean_text(v, 40) or "" end
+    local part = k .. "=" .. tostring(v)
+    parts[#parts + 1] = part
+    total = total + #part + 1
+  end
+  local lines, cur = {}, {}
+  local half = math.ceil(total / 2)
+  local len = 0
+  for i, part in ipairs(parts) do
+    if #lines == 0 and #cur > 0 and len + #part >= half + 12 then
+      lines[1], cur, len = table.concat(cur, " "), {}, 0
+    end
+    cur[#cur + 1] = part
+    len = len + #part + 1
+  end
+  if #cur > 0 then lines[#lines + 1] = table.concat(cur, " ") end
+  return lines
+end
+
+--- "Game data" block (diagnostics of the core, one or two key=value lines and a hint), or nil without
+--- diagnostics. `id` makes the block ids unique when it appears twice.
+function C.diag_block(ctx, id)
+  local lines = C.diag_lines(ctx.diag)
+  if #lines == 0 then return nil end
+  local kids = { { type = "text", id = id .. "-title", text = ctx.tr("diag_title"), style = "eyebrow" } }
+  for i, l in ipairs(lines) do kids[#kids + 1] = { type = "text", id = id .. "-" .. i, text = l, style = "meta", wrap = true } end
+  kids[#kids + 1] = { type = "text", id = id .. "-hint", text = ctx.tr("diag_hint"), style = "meta" }
+  return { type = "column", id = id, gap = 4, children = kids }
+end
+
 --- Options for a route select (at most 100): optional "no group" entry, the starter, then the places of
 --- the game (view.places: encounter areas, towns, caves ... from the game, in game order), keys with
 --- activity that are not game places (free places, legacy routes) and the selected key, in game order.

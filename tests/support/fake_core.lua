@@ -1,4 +1,4 @@
--- Fake `pokemon.core` implementing the v0.3 contract plus locations() of v0.3.1 (synthetic data only; names are made up by code).
+-- Fake `pokemon.core` implementing the v0.3 contract plus locations() of v0.3.1 and diagnostics() of v0.3.2 (synthetic data only; names are made up by code).
 --   local core = fake_core.new()            core.provider = table for mock.set_provider("pokemon.core", ...)
 --   core.world: team, box (flat list of box 1), location, badges, battle, areas, species types ...
 --   core.world.locations: list of { id, name, zones, has_encounters } (v0.3.1); core:off("locations", "not_ready")
@@ -29,6 +29,9 @@ function F.new(over)
       { id = 303, name = "Synthetic Area Three", zones = { 12 }, has_encounters = true },
     },
     zone_info = { [13] = { zone = 13, location = 400, name = "Synthetic Town" } },
+    -- v0.3.2 diagnostics(): flat table of numbers/strings; core:off("diagnostics", "unsupported") = older core
+    diag = { zones_state = "ready", zone_files = 3, zo_packs = 2, zones_with_encounters = 40, areas = 3, locations = 5,
+             ids_assigned = 5, first_rejection = "none", text_state = "ready", lines_location = 5, revision = 7, language = "en" },
     battle = { active = false },
     encounters = {},
     types = {},            -- species -> { t1, t2 }
@@ -53,6 +56,7 @@ function F.new(over)
   p.badges = guard("badges", function() return w.badges end)
   p.areas = guard("areas", function() return w.areas end)
   p.locations = guard("locations", function() return w.locations end)
+  p.diagnostics = guard("diagnostics", function() return w.diag end)
   p.battle = guard("battle", function() return w.battle end)
   p.encounters = guard("encounters", function() return w.encounters end)
   p.zone_info = guard("zone_info", function(z) return w.zone_info[z] end)
