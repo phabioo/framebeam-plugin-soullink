@@ -194,6 +194,41 @@ function A:refresh_diag()
   if util.encode(d) ~= util.encode(self.diag or {}) then self.diag, self.dirty = d, true end
 end
 
+--- Icon check (pokemon-core >= 0.3.4 `icon_variants(species, form?)`): while the "Game data" block is open, asked
+--- once per opening for the first team creature: up to 4 `{ label, desc, png }` variants, written to the cache as
+--- `diag/icon-<label>.png` and shown side by side in the block. `nil, "not_ready"` is retried every 5 s;
+--- `unsupported` (older core) switches it off for good and the section stays hidden.
+function A:refresh_icon_check()
+  if self.viewing or self.variants_unsupported then return end
+  if not common.diag_open(self.ui) then
+    if self.icheck ~= nil or self.icheck_done then self.icheck, self.icheck_done, self.icheck_next = nil, false, nil; self.dirty = true end
+    return
+  end
+  if self.icheck_done then return end
+  local now = self.fb.clock()
+  if self.icheck_next and now < self.icheck_next then return end
+  local first = self.first_team -- first creature of the team as the core reports it
+  local species = first and int(first.species)
+  if not species then return end
+  local form = int(first.form) or 0
+  local ok, list, why = pcall(self.fb.call, A.CORE, "icon_variants", species, form)
+  if not ok or why == "unsupported" then self.variants_unsupported, self.icheck = true, nil; return end
+  if list == nil and why == "not_ready" then self.icheck_next = now + 5000; return end
+  self.icheck_done = true -- asked once per opening
+  if type(list) ~= "table" then return end
+  local items = {}
+  for _, v in ipairs(list) do
+    if #items >= 4 then break end
+    if type(v) == "table" and type(v.label) == "string" and v.label:match("^%u$") and type(v.png) == "string" and #v.png > 0 then
+      local name = "diag/icon-" .. v.label .. ".png"
+      if pcall(self.fb.cache.write, name, v.png) then
+        items[#items + 1] = { label = v.label, desc = util.clean_text(v.desc, 60) or "", src = "cache:" .. name }
+      end
+    end
+  end
+  if #items > 0 then self.icheck, self.dirty = { species = species, form = form, items = items }, true end
+end
+
 --- Primary type of a species (`species_info`), cached; nil when unknown.
 function A:primary_type(species, form)
   species = int(species)
@@ -324,6 +359,8 @@ function A:poll(full)
   local snap = snapshot.from_core(self.fb, { skip_boxes = (not full) and self.boxes ~= nil, boxes = self.boxes,
     unsupported = self.unsupported })
   if snap.boxes then self.boxes = snap.boxes end
+  local t1 = type(snap.team) == "table" and snap.team[1] or nil
+  if type(t1) == "table" and int(t1.species) then self.first_team = { species = t1.species, form = t1.form } end
   local game = self.fb.game or {}
   local loc = type(snap.location) == "table" and snap.location or {}
   self.cur_zone, self.cur_loc = int(loc.zone), int(loc.location)
@@ -332,7 +369,10 @@ function A:poll(full)
   self.name_budget = A.NAME_BUDGET
   self:refresh_areas()
   self:refresh_diag()
-  local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), game = { id = game.code, language = game.language },
+  self:refresh_icon_check()
+  -- corrections about this player's routes (doesn't count, missed, added by hand) shape detection too
+  local overrides, excluded = corrections.route_overrides(corrections.effective(self.events), self.me, self.st)
+  local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), overrides = overrides, excluded = excluded, game = { id = game.code, language = game.language },
     zones = view_mod.merge_zones(self.run, self:states()),
     areas = self.areas_info, areas_unsupported = self.areas_unsupported,
     names = { species = function(id) return self:game_name("species", id) end },
@@ -516,7 +556,7 @@ end
 function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
            events = self.events, hud_death = self.hud_until and self.hud_text or nil,
-           map = self.maps and self.maps:view() or nil, diag = self.diag,
+           map = self.maps and self.maps:view() or nil, diag = self.diag, icheck = self.icheck,
            can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
            badges_manual = not self.badges_seen,
            area_name = function(id) return self:area_name(id) end,

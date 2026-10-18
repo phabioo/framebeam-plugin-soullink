@@ -272,6 +272,8 @@
   "map_files_use": "Diese Karte verwenden",
   "diag_title": "Spieldaten",
   "diag_hint": "Schick einen Screenshot davon, wenn Orte oder Namen fehlen.",
+  "icheck_title": "Icon-Prüfung",
+  "icheck_hint": "Sag uns, welches Bild richtig aussieht",
   "crop_open": "Karte zuschneiden",
   "crop_title": "Karte zuschneiden",
   "crop_hint": "Prozent des Spielbildschirms, die an jeder Seite abgeschnitten werden. Die Karte wird mit diesem Zuschnitt neu aufgenommen und zeigt nur, was das Spiel gerade anzeigt.",

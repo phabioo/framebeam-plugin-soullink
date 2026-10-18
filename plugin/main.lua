@@ -212,6 +212,41 @@ function A:refresh_diag()
   if util.encode(d) ~= util.encode(self.diag or {}) then self.diag, self.dirty = d, true end
 end
 
+--- Icon check (pokemon-core >= 0.3.4 `icon_variants(species, form?)`): while the "Game data" block is open, asked
+--- once per opening for the first team creature: up to 4 `{ label, desc, png }` variants, written to the cache as
+--- `diag/icon-<label>.png` and shown side by side in the block. `nil, "not_ready"` is retried every 5 s;
+--- `unsupported` (older core) switches it off for good and the section stays hidden.
+function A:refresh_icon_check()
+  if self.viewing or self.variants_unsupported then return end
+  if not common.diag_open(self.ui) then
+    if self.icheck ~= nil or self.icheck_done then self.icheck, self.icheck_done, self.icheck_next = nil, false, nil; self.dirty = true end
+    return
+  end
+  if self.icheck_done then return end
+  local now = self.fb.clock()
+  if self.icheck_next and now < self.icheck_next then return end
+  local first = self.first_team -- first creature of the team as the core reports it
+  local species = first and int(first.species)
+  if not species then return end
+  local form = int(first.form) or 0
+  local ok, list, why = pcall(self.fb.call, A.CORE, "icon_variants", species, form)
+  if not ok or why == "unsupported" then self.variants_unsupported, self.icheck = true, nil; return end
+  if list == nil and why == "not_ready" then self.icheck_next = now + 5000; return end
+  self.icheck_done = true -- asked once per opening
+  if type(list) ~= "table" then return end
+  local items = {}
+  for _, v in ipairs(list) do
+    if #items >= 4 then break end
+    if type(v) == "table" and type(v.label) == "string" and v.label:match("^%u$") and type(v.png) == "string" and #v.png > 0 then
+      local name = "diag/icon-" .. v.label .. ".png"
+      if pcall(self.fb.cache.write, name, v.png) then
+        items[#items + 1] = { label = v.label, desc = util.clean_text(v.desc, 60) or "", src = "cache:" .. name }
+      end
+    end
+  end
+  if #items > 0 then self.icheck, self.dirty = { species = species, form = form, items = items }, true end
+end
+
 --- Primary type of a species (`species_info`), cached; nil when unknown.
 function A:primary_type(species, form)
   species = int(species)
@@ -342,6 +377,8 @@ function A:poll(full)
   local snap = snapshot.from_core(self.fb, { skip_boxes = (not full) and self.boxes ~= nil, boxes = self.boxes,
     unsupported = self.unsupported })
   if snap.boxes then self.boxes = snap.boxes end
+  local t1 = type(snap.team) == "table" and snap.team[1] or nil
+  if type(t1) == "table" and int(t1.species) then self.first_team = { species = t1.species, form = t1.form } end
   local game = self.fb.game or {}
   local loc = type(snap.location) == "table" and snap.location or {}
   self.cur_zone, self.cur_loc = int(loc.zone), int(loc.location)
@@ -350,7 +387,10 @@ function A:poll(full)
   self.name_budget = A.NAME_BUDGET
   self:refresh_areas()
   self:refresh_diag()
-  local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), game = { id = game.code, language = game.language },
+  self:refresh_icon_check()
+  -- corrections about this player's routes (doesn't count, missed, added by hand) shape detection too
+  local overrides, excluded = corrections.route_overrides(corrections.effective(self.events), self.me, self.st)
+  local st, facts = detect.diff(self.st, snap, cfg, { now = self.fb.clock(), overrides = overrides, excluded = excluded, game = { id = game.code, language = game.language },
     zones = view_mod.merge_zones(self.run, self:states()),
     areas = self.areas_info, areas_unsupported = self.areas_unsupported,
     names = { species = function(id) return self:game_name("species", id) end },
@@ -534,7 +574,7 @@ end
 function A:ctx(view)
   return { view = view, run = self.run, me = self.me, ui = self.ui, tr = self.tr, readonly = not self:writable(),
            events = self.events, hud_death = self.hud_until and self.hud_text or nil,
-           map = self.maps and self.maps:view() or nil, diag = self.diag,
+           map = self.maps and self.maps:view() or nil, diag = self.diag, icheck = self.icheck,
            can_open = type(self.fb.ui.open) == "function", location_ok = self.location_ok == true,
            badges_manual = not self.badges_seen,
            area_name = function(id) return self:area_name(id) end,
@@ -1614,6 +1654,90 @@ end
 --- Revert the correction event with seq `target`.
 function C.revert(a) return spec({ kind = "revert", target = a.target, reason = a.reason }) end
 
+--- Effective corrections of a list of run events: valid ones only, in seq order, without the reverted
+--- ones (a reverted revert cancels nothing). Returns the list `{ seq, author, p }` and the seqs of
+--- invalid correction events.
+function C.effective(events)
+  local list = {}
+  for _, ev in ipairs(events or {}) do
+    if type(ev) == "table" and math.type(ev.seq) == "integer" and ev.type == C.TYPE then list[#list + 1] = ev end
+  end
+  table.sort(list, function(a, b) return a.seq < b.seq end)
+  local corr, invalid = {}, {}
+  for _, ev in ipairs(list) do
+    local p = type(ev.payload) == "table" and ev.payload or {}
+    if C.validate(p) then corr[#corr + 1] = { seq = ev.seq, author = ev.user_id, p = p }
+    else invalid[#invalid + 1] = ev.seq end
+  end
+  local reverted = {}
+  for i = #corr, 1, -1 do
+    local c = corr[i]
+    if c.p.kind == "revert" and not reverted[c.seq] and c.p.target < c.seq then reverted[c.p.target] = true end
+  end
+  local out = {}
+  for _, c in ipairs(corr) do
+    if c.p.kind ~= "revert" and not reverted[c.seq] then out[#out + 1] = c end
+  end
+  return out, invalid
+end
+
+--- Route overrides of one player: what the effective corrections (`C.effective`) do to the routes of
+--- the player's own state `st`. Used by the view and by detection, so both agree. Returns
+--- `overrides`, `excluded`:
+---   overrides[route] = { kind = "reopen"|"missed"|"taken", seq = correction seq, mon? (taken: "add-<seq>") }
+---   excluded[mon id] = the correction `{ seq, p }` that excluded it   (mons that "doesn't count" removed)
+--- A route entry of the state with `rs` (reset seq) >= override seq was created after the correction
+--- and is valid; older entries are shadowed by the override. Corrections apply to what happened
+--- before them, never to later facts. "reopen": the route is open again (doesn't count); "missed":
+--- marked missed; "taken": a hand-added mon holds the route. A route whose counted mon still counts
+--- is not changed by mark_missed / add (the mon holds the slot).
+function C.route_overrides(effective, user, st)
+  local routes = type(st) == "table" and type(st.routes) == "table" and st.routes or {}
+  local ov, excluded, taken = {}, {}, {}
+  -- the mon that counts on `route` at the time of the correction `at` (entries stamped `rs` >= at were
+  -- created after it and do not exist yet)
+  local function holder(route, at)
+    local o, e = ov[route], routes[route]
+    if e and (e.rs or 0) >= at then e = nil end
+    if o and (not e or (e.rs or 0) < o.seq) then
+      return (o.kind == "taken" and not excluded[o.mon]) and o.mon or nil
+    end
+    if e and e.status == "caught" and e.mon and not excluded[e.mon] then return e.mon end
+    return nil
+  end
+  for _, c in ipairs(effective or {}) do
+    local p = c.p
+    if p.user == user then
+      if p.kind == "doesnt_count" then
+        if p.mon then
+          local route = taken[p.mon]
+          if not route then
+            for _, key in ipairs(util.keys(routes)) do
+              if holder(key, c.seq) == p.mon then route = key; break end
+            end
+          end
+          local holds = route and holder(route, c.seq) == p.mon
+          excluded[p.mon] = c
+          if holds then ov[route] = { kind = "reopen", seq = c.seq } end
+        else
+          local h = holder(p.route, c.seq)
+          if h then excluded[h] = c end
+          ov[p.route] = { kind = "reopen", seq = c.seq }
+        end
+      elseif p.kind == "mark_missed" then
+        if not holder(p.route, c.seq) then ov[p.route] = { kind = "missed", seq = c.seq } end
+      elseif p.kind == "add" then
+        if not holder(p.route, c.seq) then
+          local id = "add-" .. c.seq
+          ov[p.route] = { kind = "taken", seq = c.seq, mon = id }
+          taken[id] = p.route
+        end
+      end
+    end
+  end
+  return ov, excluded
+end
+
 local function is_str(v, max) return type(v) == "string" and #v > 0 and #v <= (max or 64) end
 local function is_route_ref(v) return type(v) == "string" and oras.is_key(v) end
 local function opt(v, f) return v == nil or f(v) end
@@ -1735,11 +1859,12 @@ local function battle_info(snap)
 end
 
 -- Is a line (family) already owned by a tracked mon that counts for the dupes clause?
-local function owns_line(st, species, family)
+local function owns_line(st, species, family, opts)
   if species == nil then return false end
   local fam = family(species)
-  for _, m in pairs(st.mons) do
-    if m.why ~= "dupe" and m.why ~= "extra" and m.where ~= "gone" and family(m.species) == fam then
+  local excluded = opts and opts.excluded or {}
+  for pid, m in pairs(st.mons) do
+    if not excluded[pid] and m.why ~= "dupe" and m.why ~= "extra" and m.where ~= "gone" and family(m.species) == fam then
       return true
     end
   end
@@ -1866,12 +1991,33 @@ local function encounter_route(st, e, opts)
   return st.place.key
 end
 
+-- The route entry as detection sees it: the stored one, unless a correction newer than the entry
+-- shadows it (opts.overrides, see corrections.route_overrides). Returns entry|nil and the override
+-- seq (stamped as `rs` on entries created now, so the view and later polls treat them as valid).
+local function live_entry(st, opts, key)
+  local e = key and st.routes[key] or nil
+  local ov = key and opts.overrides and opts.overrides[key] or nil
+  if not ov then return e, nil end
+  if e and (e.rs or 0) >= ov.seq then return e, ov.seq end -- created after the correction
+  if ov.kind == "reopen" then return nil, ov.seq end
+  if ov.kind == "missed" then
+    local sp = e and e.status ~= "caught" and e.species or nil
+    return { status = "missed", species = sp }, ov.seq
+  end
+  return { status = "caught", mon = ov.mon, kind = "gift" }, ov.seq -- taken: a hand-added mon
+end
+
+local function new_entry(e, rs)
+  e.rs = rs
+  return e
+end
+
 local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
   local fact = { kind = "encounter", route = pk, species = foe.species, form = foe.form,
                  shiny = foe.shiny == true, horde = horde, counts = false }
   fact.species_name = note_species(st, opts, foe.species, foe.species_name)
   local r = cfg.rules
-  local existing = pk and st.routes[pk]
+  local existing, rs = live_entry(st, opts, pk)
   local clash = type_clash(cfg, opts, pk, foe.species, foe.form)
   if horde and not r.hordes_count then
     fact.why = "horde"
@@ -1879,7 +2025,7 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
     fact.why = "no_place"
   elseif fact.shiny and r.shiny_clause then
     fact.why = "shiny"
-  elseif r.dupes_clause and owns_line(st, foe.species, family) then
+  elseif r.dupes_clause and owns_line(st, foe.species, family, opts) then
     fact.why = "dupe"
   elseif clash then
     fact.why = "type"
@@ -1888,7 +2034,7 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
   else
     fact.counts = true
     if not existing then
-      st.routes[pk] = { status = "encounter", species = foe.species, kind = horde and "horde" or "wild" }
+      st.routes[pk] = new_entry({ status = "encounter", species = foe.species, kind = horde and "horde" or "wild" }, rs)
     end
   end
   facts[#facts + 1] = fact
@@ -1896,7 +2042,7 @@ end
 
 local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
   local rec, r = c.rec, cfg.rules
-  local dupe = r.dupes_clause and owns_line(st, rec.species, family) -- before the mon is added
+  local dupe = r.dupes_clause and owns_line(st, rec.species, family, opts) -- before the mon is added
   local clash, ty = type_clash(cfg, opts, pk, rec.species, rec.form)
   local mon = {
     species = rec.species, form = rec.form, nickname = util.clean_text(rec.nickname, 24),
@@ -1911,7 +2057,7 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
                  nickname = mon.nickname, level = rec.level, shiny = rec.shiny == true,
                  route = pk, where = c.where, counts = false, starter = starter or nil }
   fact.species_name = note_species(st, opts, rec.species, rec.species_name)
-  local existing = pk and st.routes[pk]
+  local existing, rs = live_entry(st, opts, pk)
   if rec.egg then
     mon.gift, mon.why = true, "gift"
     fact.gift, fact.why = true, "gift"
@@ -1927,9 +2073,9 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
     local entry = { status = "caught", mon = c.pid, species = rec.species,
                     kind = starter and "starter" or "wild" }
     if not existing or existing.status == "encounter" then
-      st.routes[pk], fact.counts = entry, true
+      st.routes[pk], fact.counts = new_entry(entry, rs), true
     elseif existing.status == "missed" and existing.species == rec.species then
-      st.routes[pk], fact.counts = entry, true -- the catch arrived after the battle was closed
+      st.routes[pk], fact.counts = new_entry(entry, rs), true -- the catch arrived after the battle was closed
     elseif not r.first_encounter_only then
       mon.why, fact.why = "additional", "additional"
     else
@@ -1940,10 +2086,11 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
 end
 
 -- The route with the one pending encounter (a battle that has not ended in a catch or a miss), or nil.
-local function pending_route(st)
+local function pending_route(st, opts)
   local found
-  for key, e in pairs(st.routes) do
-    if e.status == "encounter" then
+  for _, key in ipairs(util.keys(st.routes)) do
+    local e = live_entry(st, opts, key)
+    if e and e.status == "encounter" then
       if found then return nil end
       found = key
     end
@@ -1959,17 +2106,21 @@ end
 
 D.PENDING_MS = 60000 -- how long an ended wild battle may stay undecided (caught or missed)
 
-local function has_encounter(st)
-  for _, e in pairs(st.routes) do if e.status == "encounter" then return true end end
+local function has_encounter(st, opts)
+  for _, key in ipairs(util.keys(st.routes)) do
+    local e = live_entry(st, opts, key)
+    if e and e.status == "encounter" then return true end
+  end
   return false
 end
 
 -- Close the pending encounter(s): routes still at "encounter" are missed.
-local function expire_pending(st, facts)
+local function expire_pending(st, facts, opts)
   st.pend = nil
   for _, key in ipairs(util.keys(st.routes)) do
-    local e = st.routes[key]
-    if e.status == "encounter" then
+    local e = live_entry(st, opts, key)
+    if e and e.status == "encounter" then
+      e = st.routes[key]
       e.status = "missed"
       facts[#facts + 1] = { kind = "missed", route = key, species = e.species }
     end
@@ -2116,7 +2267,7 @@ function D.diff(prev, snap, cfg, opts)
   -- new mons: a catch lands on the pending encounter's route, else on the current place
   for _, c in ipairs(list) do
     if not st.baseline[c.pid] and not st.mons[c.pid] then
-      handle_catch(st, cfg, c, catch_place or pending_route(st) or st.place.key, catch_place ~= nil, facts, family, opts)
+      handle_catch(st, cfg, c, catch_place or pending_route(st, opts) or st.place.key, catch_place ~= nil, facts, family, opts)
     end
   end
 
@@ -2136,7 +2287,7 @@ function D.diff(prev, snap, cfg, opts)
       for _, e in ipairs(enc) do
         if e.seq > st.enc_seq then
           st.enc_seq = e.seq
-          if st.pend then expire_pending(st, facts) end
+          if st.pend then expire_pending(st, facts, opts) end
           handle_encounter(st, cfg, encounter_route(st, e, opts), e, e.horde == true, facts, family, opts)
         end
       end
@@ -2144,12 +2295,12 @@ function D.diff(prev, snap, cfg, opts)
   end
   if bat.known then
     if not seq_mode and bat.active and not st.inb and bat.wild then
-      if st.pend then expire_pending(st, facts) end
+      if st.pend then expire_pending(st, facts, opts) end
       handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family, opts)
     elseif not bat.active and st.inb then
       -- the battle ended: caught, missed or fled is not known yet (the catch shows up in the party or
       -- the boxes only after the Pokedex page and the nickname dialog), so the encounter stays pending
-      if has_encounter(st) then
+      if has_encounter(st, opts) then
         st.pend = { since = now, zone = st.inb_zone, loc = st.inb_loc }
       end
     end
@@ -2170,14 +2321,14 @@ function D.diff(prev, snap, cfg, opts)
   -- a pending encounter ends as caught (see above), or as missed when the player moved on, the next
   -- wild battle started or the timeout passed
   if st.pend then
-    if not has_encounter(st) then
+    if not has_encounter(st, opts) then
       st.pend = nil
     else
       local p = st.pend
       local moved = (p.loc ~= nil and zone_id(loc_now.location) ~= nil and p.loc ~= zone_id(loc_now.location))
         or (p.zone ~= nil and p.loc == nil and zone_id(loc_now.zone) ~= nil and p.zone ~= zone_id(loc_now.zone))
       if p.since == nil and now then p.since = now end
-      if moved or (now and p.since and now - p.since >= D.PENDING_MS) then expire_pending(st, facts) end
+      if moved or (now and p.since and now - p.since >= D.PENDING_MS) then expire_pending(st, facts, opts) end
     end
   end
 
@@ -2688,7 +2839,7 @@ local function collect_events(events)
     if type(ev) == "table" and math.type(ev.seq) == "integer" then list[#list + 1] = ev end
   end
   table.sort(list, function(a, b) return a.seq < b.seq end)
-  local catch_seq, death_seq, corr, invalid = {}, {}, {}, {}
+  local catch_seq, death_seq = {}, {}
   for _, ev in ipairs(list) do
     local p = type(ev.payload) == "table" and ev.payload or {}
     local user = ev.user_id or p.user
@@ -2699,26 +2850,9 @@ local function collect_events(events)
       local k = mkey(user, p.mon)
       death_seq[k] = death_seq[k] or {}
       if not death_seq[k][p.deaths or 0] then death_seq[k][p.deaths or 0] = ev.seq end
-    elseif ev.type == corrections.TYPE then
-      if corrections.validate(p) then
-        corr[#corr + 1] = { seq = ev.seq, author = ev.user_id, p = p }
-      else
-        invalid[#invalid + 1] = ev.seq
-      end
     end
   end
-  -- reverts: scan newest first; a reverted revert does not revert anything
-  local reverted = {}
-  for i = #corr, 1, -1 do
-    local c = corr[i]
-    if c.p.kind == "revert" and not reverted[c.seq] and c.p.target < c.seq then
-      reverted[c.p.target] = true
-    end
-  end
-  local effective = {}
-  for _, c in ipairs(corr) do
-    if c.p.kind ~= "revert" and not reverted[c.seq] then effective[#effective + 1] = c end
-  end
+  local effective, invalid = corrections.effective(list)
   return catch_seq, death_seq, effective, invalid
 end
 
@@ -2743,7 +2877,7 @@ local function build_players(players, states, effective, catch_seq, death_seq)
   local pv = {}
   for _, pl in ipairs(players) do
     local st = state.ensure(util.copy(states[pl.id]))
-    local w = { st = st, mons = {}, ids = {}, routes = util.copy(st.routes), reopened = {}, manual_missed = {} }
+    local w = { st = st, mons = {}, ids = {}, routes = util.copy(st.routes), overrides = {} }
     for _, pid in ipairs(util.keys(st.mons)) do
       w.mons[pid] = new_vmon(pl.id, pid, st.mons[pid])
       w.ids[#w.ids + 1] = pid
@@ -2753,6 +2887,7 @@ local function build_players(players, states, effective, catch_seq, death_seq)
       local vm = e.status == "caught" and e.mon and w.mons[e.mon]
       if vm then vm.counted_route, vm.entry_kind = route, e.kind end
     end
+    w.overrides, w.excluded = corrections.route_overrides(effective, pl.id, st)
     pv[pl.id] = w
   end
 
@@ -2760,18 +2895,7 @@ local function build_players(players, states, effective, catch_seq, death_seq)
     local p, seq = c.p, c.seq
     local w = p.user and pv[p.user]
     local k = p.kind
-    if k == "doesnt_count" and w then
-      local vm = p.mon and w.mons[p.mon]
-      if not vm and p.route and not p.mon then
-        local e = w.routes[p.route]
-        if e and e.status == "caught" and e.mon then vm = w.mons[e.mon] end
-        if not vm or vm.counted_route ~= p.route then vm = nil end
-        if not vm then w.reopened[p.route], w.manual_missed[p.route] = true, nil end
-      end
-      if vm then vm.excluded, vm.why = true, p.reason or "manual" end
-    elseif k == "mark_missed" and w then
-      w.reopened[p.route], w.manual_missed[p.route] = nil, true
-    elseif k == "set_group" and w and w.mons[p.mon] then
+    if k == "set_group" and w and w.mons[p.mon] then
       local vm = w.mons[p.mon]
       vm.group_override = p.group ~= "none" and p.group or false
       vm.slot_seq = seq
@@ -2783,7 +2907,6 @@ local function build_players(players, states, effective, catch_seq, death_seq)
       vm.virtual, vm.slot_seq, vm.add_route = true, seq, p.route
       w.mons[id] = vm
       w.ids[#w.ids + 1] = id
-      w.reopened[p.route], w.manual_missed[p.route] = nil, nil
       catch_seq[mkey(p.user, id)] = seq
       if p.state == "dead" then
         death_seq[mkey(p.user, id)] = { [1] = seq }
@@ -2802,6 +2925,14 @@ local function build_players(players, states, effective, catch_seq, death_seq)
         local vm = ow and ow.mons[e.mon]
         if vm and e.deaths > vm.undone then vm.undone = e.deaths end
       end
+    end
+  end
+  -- mons that "doesn't count" removed (decided together with the route overrides, see corrections.route_overrides)
+  for _, pl in ipairs(players) do
+    local w = pv[pl.id]
+    for id, c in pairs(w.excluded) do
+      local vm = w.mons[id]
+      if vm then vm.excluded, vm.why = true, c.p.reason or "manual" end
     end
   end
   return pv
@@ -2845,9 +2976,12 @@ end
 local function cell_state(w, route)
   local vm = w.slots[route]
   if vm then return "caught", vm end
-  if w.manual_missed[route] then return "missed" end
-  local e = w.routes[route]
-  if e and not w.reopened[route] then
+  local e, ov = w.routes[route], w.overrides[route]
+  if ov and (not e or (e.rs or 0) < ov.seq) then
+    -- a correction newer than the stored entry: the entry is shadowed (see corrections.route_overrides)
+    return ov.kind == "missed" and "missed" or "open"
+  end
+  if e then
     if e.status == "missed" then return "missed" end
     if e.status == "encounter" then return "encounter", nil, e end
   end
@@ -2976,7 +3110,7 @@ function V.view(run, states, events, cfg)
     local w = pv[pl.id]
     for r in pairs(w.slots) do route_set[r] = true end
     for r in pairs(w.routes) do route_set[r] = true end
-    for r in pairs(w.manual_missed) do route_set[r] = true end
+    for r, o in pairs(w.overrides) do if o.kind == "missed" then route_set[r] = true end end
     if w.st.place.key then route_set[w.st.place.key] = true end
   end
   local route_keys = util.keys(route_set)
@@ -3466,6 +3600,19 @@ function C.diag_block(ctx, id)
   if #lines == 0 then return nil end
   local kids = { { type = "text", id = id .. "-title", text = ctx.tr("diag_title"), style = "eyebrow" } }
   for i, l in ipairs(lines) do kids[#kids + 1] = { type = "text", id = id .. "-" .. i, text = l, style = "meta", wrap = true } end
+  local ic = ctx.icheck
+  if type(ic) == "table" and type(ic.items) == "table" and #ic.items > 0 then
+    kids[#kids + 1] = { type = "text", id = id .. "-ic-title", text = ctx.tr("icheck_title"), style = "eyebrow" }
+    local cols = {}
+    for i, it in ipairs(ic.items) do
+      cols[i] = { type = "column", id = id .. "-ic-" .. it.label, gap = 2, children = {
+        { type = "image", id = id .. "-ic-img-" .. it.label, src = it.src, size = "m", state = "alive", label = it.label },
+        { type = "text", id = id .. "-ic-lbl-" .. it.label, text = it.label, style = "title" },
+        { type = "text", id = id .. "-ic-desc-" .. it.label, text = it.desc, style = "meta", wrap = true } } }
+    end
+    kids[#kids + 1] = { type = "row", id = id .. "-ic-row", gap = 8, children = cols }
+    kids[#kids + 1] = { type = "text", id = id .. "-ic-hint", text = ctx.tr("icheck_hint"), style = "meta" }
+  end
   kids[#kids + 1] = { type = "text", id = id .. "-hint", text = ctx.tr("diag_hint"), style = "meta" }
   return { type = "column", id = id, gap = 4, children = kids }
 end

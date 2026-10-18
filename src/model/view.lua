@@ -21,7 +21,7 @@ local function collect_events(events)
     if type(ev) == "table" and math.type(ev.seq) == "integer" then list[#list + 1] = ev end
   end
   table.sort(list, function(a, b) return a.seq < b.seq end)
-  local catch_seq, death_seq, corr, invalid = {}, {}, {}, {}
+  local catch_seq, death_seq = {}, {}
   for _, ev in ipairs(list) do
     local p = type(ev.payload) == "table" and ev.payload or {}
     local user = ev.user_id or p.user
@@ -32,26 +32,9 @@ local function collect_events(events)
       local k = mkey(user, p.mon)
       death_seq[k] = death_seq[k] or {}
       if not death_seq[k][p.deaths or 0] then death_seq[k][p.deaths or 0] = ev.seq end
-    elseif ev.type == corrections.TYPE then
-      if corrections.validate(p) then
-        corr[#corr + 1] = { seq = ev.seq, author = ev.user_id, p = p }
-      else
-        invalid[#invalid + 1] = ev.seq
-      end
     end
   end
-  -- reverts: scan newest first; a reverted revert does not revert anything
-  local reverted = {}
-  for i = #corr, 1, -1 do
-    local c = corr[i]
-    if c.p.kind == "revert" and not reverted[c.seq] and c.p.target < c.seq then
-      reverted[c.p.target] = true
-    end
-  end
-  local effective = {}
-  for _, c in ipairs(corr) do
-    if c.p.kind ~= "revert" and not reverted[c.seq] then effective[#effective + 1] = c end
-  end
+  local effective, invalid = corrections.effective(list)
   return catch_seq, death_seq, effective, invalid
 end
 
@@ -76,7 +59,7 @@ local function build_players(players, states, effective, catch_seq, death_seq)
   local pv = {}
   for _, pl in ipairs(players) do
     local st = state.ensure(util.copy(states[pl.id]))
-    local w = { st = st, mons = {}, ids = {}, routes = util.copy(st.routes), reopened = {}, manual_missed = {} }
+    local w = { st = st, mons = {}, ids = {}, routes = util.copy(st.routes), overrides = {} }
     for _, pid in ipairs(util.keys(st.mons)) do
       w.mons[pid] = new_vmon(pl.id, pid, st.mons[pid])
       w.ids[#w.ids + 1] = pid
@@ -86,6 +69,7 @@ local function build_players(players, states, effective, catch_seq, death_seq)
       local vm = e.status == "caught" and e.mon and w.mons[e.mon]
       if vm then vm.counted_route, vm.entry_kind = route, e.kind end
     end
+    w.overrides, w.excluded = corrections.route_overrides(effective, pl.id, st)
     pv[pl.id] = w
   end
 
@@ -93,18 +77,7 @@ local function build_players(players, states, effective, catch_seq, death_seq)
     local p, seq = c.p, c.seq
     local w = p.user and pv[p.user]
     local k = p.kind
-    if k == "doesnt_count" and w then
-      local vm = p.mon and w.mons[p.mon]
-      if not vm and p.route and not p.mon then
-        local e = w.routes[p.route]
-        if e and e.status == "caught" and e.mon then vm = w.mons[e.mon] end
-        if not vm or vm.counted_route ~= p.route then vm = nil end
-        if not vm then w.reopened[p.route], w.manual_missed[p.route] = true, nil end
-      end
-      if vm then vm.excluded, vm.why = true, p.reason or "manual" end
-    elseif k == "mark_missed" and w then
-      w.reopened[p.route], w.manual_missed[p.route] = nil, true
-    elseif k == "set_group" and w and w.mons[p.mon] then
+    if k == "set_group" and w and w.mons[p.mon] then
       local vm = w.mons[p.mon]
       vm.group_override = p.group ~= "none" and p.group or false
       vm.slot_seq = seq
@@ -116,7 +89,6 @@ local function build_players(players, states, effective, catch_seq, death_seq)
       vm.virtual, vm.slot_seq, vm.add_route = true, seq, p.route
       w.mons[id] = vm
       w.ids[#w.ids + 1] = id
-      w.reopened[p.route], w.manual_missed[p.route] = nil, nil
       catch_seq[mkey(p.user, id)] = seq
       if p.state == "dead" then
         death_seq[mkey(p.user, id)] = { [1] = seq }
@@ -135,6 +107,14 @@ local function build_players(players, states, effective, catch_seq, death_seq)
         local vm = ow and ow.mons[e.mon]
         if vm and e.deaths > vm.undone then vm.undone = e.deaths end
       end
+    end
+  end
+  -- mons that "doesn't count" removed (decided together with the route overrides, see corrections.route_overrides)
+  for _, pl in ipairs(players) do
+    local w = pv[pl.id]
+    for id, c in pairs(w.excluded) do
+      local vm = w.mons[id]
+      if vm then vm.excluded, vm.why = true, c.p.reason or "manual" end
     end
   end
   return pv
@@ -178,9 +158,12 @@ end
 local function cell_state(w, route)
   local vm = w.slots[route]
   if vm then return "caught", vm end
-  if w.manual_missed[route] then return "missed" end
-  local e = w.routes[route]
-  if e and not w.reopened[route] then
+  local e, ov = w.routes[route], w.overrides[route]
+  if ov and (not e or (e.rs or 0) < ov.seq) then
+    -- a correction newer than the stored entry: the entry is shadowed (see corrections.route_overrides)
+    return ov.kind == "missed" and "missed" or "open"
+  end
+  if e then
     if e.status == "missed" then return "missed" end
     if e.status == "encounter" then return "encounter", nil, e end
   end
@@ -309,7 +292,7 @@ function V.view(run, states, events, cfg)
     local w = pv[pl.id]
     for r in pairs(w.slots) do route_set[r] = true end
     for r in pairs(w.routes) do route_set[r] = true end
-    for r in pairs(w.manual_missed) do route_set[r] = true end
+    for r, o in pairs(w.overrides) do if o.kind == "missed" then route_set[r] = true end end
     if w.st.place.key then route_set[w.st.place.key] = true end
   end
   local route_keys = util.keys(route_set)

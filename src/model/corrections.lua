@@ -68,6 +68,90 @@ end
 --- Revert the correction event with seq `target`.
 function C.revert(a) return spec({ kind = "revert", target = a.target, reason = a.reason }) end
 
+--- Effective corrections of a list of run events: valid ones only, in seq order, without the reverted
+--- ones (a reverted revert cancels nothing). Returns the list `{ seq, author, p }` and the seqs of
+--- invalid correction events.
+function C.effective(events)
+  local list = {}
+  for _, ev in ipairs(events or {}) do
+    if type(ev) == "table" and math.type(ev.seq) == "integer" and ev.type == C.TYPE then list[#list + 1] = ev end
+  end
+  table.sort(list, function(a, b) return a.seq < b.seq end)
+  local corr, invalid = {}, {}
+  for _, ev in ipairs(list) do
+    local p = type(ev.payload) == "table" and ev.payload or {}
+    if C.validate(p) then corr[#corr + 1] = { seq = ev.seq, author = ev.user_id, p = p }
+    else invalid[#invalid + 1] = ev.seq end
+  end
+  local reverted = {}
+  for i = #corr, 1, -1 do
+    local c = corr[i]
+    if c.p.kind == "revert" and not reverted[c.seq] and c.p.target < c.seq then reverted[c.p.target] = true end
+  end
+  local out = {}
+  for _, c in ipairs(corr) do
+    if c.p.kind ~= "revert" and not reverted[c.seq] then out[#out + 1] = c end
+  end
+  return out, invalid
+end
+
+--- Route overrides of one player: what the effective corrections (`C.effective`) do to the routes of
+--- the player's own state `st`. Used by the view and by detection, so both agree. Returns
+--- `overrides`, `excluded`:
+---   overrides[route] = { kind = "reopen"|"missed"|"taken", seq = correction seq, mon? (taken: "add-<seq>") }
+---   excluded[mon id] = the correction `{ seq, p }` that excluded it   (mons that "doesn't count" removed)
+--- A route entry of the state with `rs` (reset seq) >= override seq was created after the correction
+--- and is valid; older entries are shadowed by the override. Corrections apply to what happened
+--- before them, never to later facts. "reopen": the route is open again (doesn't count); "missed":
+--- marked missed; "taken": a hand-added mon holds the route. A route whose counted mon still counts
+--- is not changed by mark_missed / add (the mon holds the slot).
+function C.route_overrides(effective, user, st)
+  local routes = type(st) == "table" and type(st.routes) == "table" and st.routes or {}
+  local ov, excluded, taken = {}, {}, {}
+  -- the mon that counts on `route` at the time of the correction `at` (entries stamped `rs` >= at were
+  -- created after it and do not exist yet)
+  local function holder(route, at)
+    local o, e = ov[route], routes[route]
+    if e and (e.rs or 0) >= at then e = nil end
+    if o and (not e or (e.rs or 0) < o.seq) then
+      return (o.kind == "taken" and not excluded[o.mon]) and o.mon or nil
+    end
+    if e and e.status == "caught" and e.mon and not excluded[e.mon] then return e.mon end
+    return nil
+  end
+  for _, c in ipairs(effective or {}) do
+    local p = c.p
+    if p.user == user then
+      if p.kind == "doesnt_count" then
+        if p.mon then
+          local route = taken[p.mon]
+          if not route then
+            for _, key in ipairs(util.keys(routes)) do
+              if holder(key, c.seq) == p.mon then route = key; break end
+            end
+          end
+          local holds = route and holder(route, c.seq) == p.mon
+          excluded[p.mon] = c
+          if holds then ov[route] = { kind = "reopen", seq = c.seq } end
+        else
+          local h = holder(p.route, c.seq)
+          if h then excluded[h] = c end
+          ov[p.route] = { kind = "reopen", seq = c.seq }
+        end
+      elseif p.kind == "mark_missed" then
+        if not holder(p.route, c.seq) then ov[p.route] = { kind = "missed", seq = c.seq } end
+      elseif p.kind == "add" then
+        if not holder(p.route, c.seq) then
+          local id = "add-" .. c.seq
+          ov[p.route] = { kind = "taken", seq = c.seq, mon = id }
+          taken[id] = p.route
+        end
+      end
+    end
+  end
+  return ov, excluded
+end
+
 local function is_str(v, max) return type(v) == "string" and #v > 0 and #v <= (max or 64) end
 local function is_route_ref(v) return type(v) == "string" and oras.is_key(v) end
 local function opt(v, f) return v == nil or f(v) end

@@ -64,11 +64,12 @@ local function battle_info(snap)
 end
 
 -- Is a line (family) already owned by a tracked mon that counts for the dupes clause?
-local function owns_line(st, species, family)
+local function owns_line(st, species, family, opts)
   if species == nil then return false end
   local fam = family(species)
-  for _, m in pairs(st.mons) do
-    if m.why ~= "dupe" and m.why ~= "extra" and m.where ~= "gone" and family(m.species) == fam then
+  local excluded = opts and opts.excluded or {}
+  for pid, m in pairs(st.mons) do
+    if not excluded[pid] and m.why ~= "dupe" and m.why ~= "extra" and m.where ~= "gone" and family(m.species) == fam then
       return true
     end
   end
@@ -195,12 +196,33 @@ local function encounter_route(st, e, opts)
   return st.place.key
 end
 
+-- The route entry as detection sees it: the stored one, unless a correction newer than the entry
+-- shadows it (opts.overrides, see corrections.route_overrides). Returns entry|nil and the override
+-- seq (stamped as `rs` on entries created now, so the view and later polls treat them as valid).
+local function live_entry(st, opts, key)
+  local e = key and st.routes[key] or nil
+  local ov = key and opts.overrides and opts.overrides[key] or nil
+  if not ov then return e, nil end
+  if e and (e.rs or 0) >= ov.seq then return e, ov.seq end -- created after the correction
+  if ov.kind == "reopen" then return nil, ov.seq end
+  if ov.kind == "missed" then
+    local sp = e and e.status ~= "caught" and e.species or nil
+    return { status = "missed", species = sp }, ov.seq
+  end
+  return { status = "caught", mon = ov.mon, kind = "gift" }, ov.seq -- taken: a hand-added mon
+end
+
+local function new_entry(e, rs)
+  e.rs = rs
+  return e
+end
+
 local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
   local fact = { kind = "encounter", route = pk, species = foe.species, form = foe.form,
                  shiny = foe.shiny == true, horde = horde, counts = false }
   fact.species_name = note_species(st, opts, foe.species, foe.species_name)
   local r = cfg.rules
-  local existing = pk and st.routes[pk]
+  local existing, rs = live_entry(st, opts, pk)
   local clash = type_clash(cfg, opts, pk, foe.species, foe.form)
   if horde and not r.hordes_count then
     fact.why = "horde"
@@ -208,7 +230,7 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
     fact.why = "no_place"
   elseif fact.shiny and r.shiny_clause then
     fact.why = "shiny"
-  elseif r.dupes_clause and owns_line(st, foe.species, family) then
+  elseif r.dupes_clause and owns_line(st, foe.species, family, opts) then
     fact.why = "dupe"
   elseif clash then
     fact.why = "type"
@@ -217,7 +239,7 @@ local function handle_encounter(st, cfg, pk, foe, horde, facts, family, opts)
   else
     fact.counts = true
     if not existing then
-      st.routes[pk] = { status = "encounter", species = foe.species, kind = horde and "horde" or "wild" }
+      st.routes[pk] = new_entry({ status = "encounter", species = foe.species, kind = horde and "horde" or "wild" }, rs)
     end
   end
   facts[#facts + 1] = fact
@@ -225,7 +247,7 @@ end
 
 local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
   local rec, r = c.rec, cfg.rules
-  local dupe = r.dupes_clause and owns_line(st, rec.species, family) -- before the mon is added
+  local dupe = r.dupes_clause and owns_line(st, rec.species, family, opts) -- before the mon is added
   local clash, ty = type_clash(cfg, opts, pk, rec.species, rec.form)
   local mon = {
     species = rec.species, form = rec.form, nickname = util.clean_text(rec.nickname, 24),
@@ -240,7 +262,7 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
                  nickname = mon.nickname, level = rec.level, shiny = rec.shiny == true,
                  route = pk, where = c.where, counts = false, starter = starter or nil }
   fact.species_name = note_species(st, opts, rec.species, rec.species_name)
-  local existing = pk and st.routes[pk]
+  local existing, rs = live_entry(st, opts, pk)
   if rec.egg then
     mon.gift, mon.why = true, "gift"
     fact.gift, fact.why = true, "gift"
@@ -256,9 +278,9 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
     local entry = { status = "caught", mon = c.pid, species = rec.species,
                     kind = starter and "starter" or "wild" }
     if not existing or existing.status == "encounter" then
-      st.routes[pk], fact.counts = entry, true
+      st.routes[pk], fact.counts = new_entry(entry, rs), true
     elseif existing.status == "missed" and existing.species == rec.species then
-      st.routes[pk], fact.counts = entry, true -- the catch arrived after the battle was closed
+      st.routes[pk], fact.counts = new_entry(entry, rs), true -- the catch arrived after the battle was closed
     elseif not r.first_encounter_only then
       mon.why, fact.why = "additional", "additional"
     else
@@ -269,10 +291,11 @@ local function handle_catch(st, cfg, c, pk, starter, facts, family, opts)
 end
 
 -- The route with the one pending encounter (a battle that has not ended in a catch or a miss), or nil.
-local function pending_route(st)
+local function pending_route(st, opts)
   local found
-  for key, e in pairs(st.routes) do
-    if e.status == "encounter" then
+  for _, key in ipairs(util.keys(st.routes)) do
+    local e = live_entry(st, opts, key)
+    if e and e.status == "encounter" then
       if found then return nil end
       found = key
     end
@@ -288,17 +311,21 @@ end
 
 D.PENDING_MS = 60000 -- how long an ended wild battle may stay undecided (caught or missed)
 
-local function has_encounter(st)
-  for _, e in pairs(st.routes) do if e.status == "encounter" then return true end end
+local function has_encounter(st, opts)
+  for _, key in ipairs(util.keys(st.routes)) do
+    local e = live_entry(st, opts, key)
+    if e and e.status == "encounter" then return true end
+  end
   return false
 end
 
 -- Close the pending encounter(s): routes still at "encounter" are missed.
-local function expire_pending(st, facts)
+local function expire_pending(st, facts, opts)
   st.pend = nil
   for _, key in ipairs(util.keys(st.routes)) do
-    local e = st.routes[key]
-    if e.status == "encounter" then
+    local e = live_entry(st, opts, key)
+    if e and e.status == "encounter" then
+      e = st.routes[key]
       e.status = "missed"
       facts[#facts + 1] = { kind = "missed", route = key, species = e.species }
     end
@@ -445,7 +472,7 @@ function D.diff(prev, snap, cfg, opts)
   -- new mons: a catch lands on the pending encounter's route, else on the current place
   for _, c in ipairs(list) do
     if not st.baseline[c.pid] and not st.mons[c.pid] then
-      handle_catch(st, cfg, c, catch_place or pending_route(st) or st.place.key, catch_place ~= nil, facts, family, opts)
+      handle_catch(st, cfg, c, catch_place or pending_route(st, opts) or st.place.key, catch_place ~= nil, facts, family, opts)
     end
   end
 
@@ -465,7 +492,7 @@ function D.diff(prev, snap, cfg, opts)
       for _, e in ipairs(enc) do
         if e.seq > st.enc_seq then
           st.enc_seq = e.seq
-          if st.pend then expire_pending(st, facts) end
+          if st.pend then expire_pending(st, facts, opts) end
           handle_encounter(st, cfg, encounter_route(st, e, opts), e, e.horde == true, facts, family, opts)
         end
       end
@@ -473,12 +500,12 @@ function D.diff(prev, snap, cfg, opts)
   end
   if bat.known then
     if not seq_mode and bat.active and not st.inb and bat.wild then
-      if st.pend then expire_pending(st, facts) end
+      if st.pend then expire_pending(st, facts, opts) end
       handle_encounter(st, cfg, st.place.key, bat.foes[1] or {}, bat.horde, facts, family, opts)
     elseif not bat.active and st.inb then
       -- the battle ended: caught, missed or fled is not known yet (the catch shows up in the party or
       -- the boxes only after the Pokedex page and the nickname dialog), so the encounter stays pending
-      if has_encounter(st) then
+      if has_encounter(st, opts) then
         st.pend = { since = now, zone = st.inb_zone, loc = st.inb_loc }
       end
     end
@@ -499,14 +526,14 @@ function D.diff(prev, snap, cfg, opts)
   -- a pending encounter ends as caught (see above), or as missed when the player moved on, the next
   -- wild battle started or the timeout passed
   if st.pend then
-    if not has_encounter(st) then
+    if not has_encounter(st, opts) then
       st.pend = nil
     else
       local p = st.pend
       local moved = (p.loc ~= nil and zone_id(loc_now.location) ~= nil and p.loc ~= zone_id(loc_now.location))
         or (p.zone ~= nil and p.loc == nil and zone_id(loc_now.zone) ~= nil and p.zone ~= zone_id(loc_now.zone))
       if p.since == nil and now then p.since = now end
-      if moved or (now and p.since and now - p.since >= D.PENDING_MS) then expire_pending(st, facts) end
+      if moved or (now and p.since and now - p.since >= D.PENDING_MS) then expire_pending(st, facts, opts) end
     end
   end
 

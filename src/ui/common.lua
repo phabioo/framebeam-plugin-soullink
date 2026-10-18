@@ -146,6 +146,19 @@ function C.diag_block(ctx, id)
   if #lines == 0 then return nil end
   local kids = { { type = "text", id = id .. "-title", text = ctx.tr("diag_title"), style = "eyebrow" } }
   for i, l in ipairs(lines) do kids[#kids + 1] = { type = "text", id = id .. "-" .. i, text = l, style = "meta", wrap = true } end
+  local ic = ctx.icheck
+  if type(ic) == "table" and type(ic.items) == "table" and #ic.items > 0 then
+    kids[#kids + 1] = { type = "text", id = id .. "-ic-title", text = ctx.tr("icheck_title"), style = "eyebrow" }
+    local cols = {}
+    for i, it in ipairs(ic.items) do
+      cols[i] = { type = "column", id = id .. "-ic-" .. it.label, gap = 2, children = {
+        { type = "image", id = id .. "-ic-img-" .. it.label, src = it.src, size = "m", state = "alive", label = it.label },
+        { type = "text", id = id .. "-ic-lbl-" .. it.label, text = it.label, style = "title" },
+        { type = "text", id = id .. "-ic-desc-" .. it.label, text = it.desc, style = "meta", wrap = true } } }
+    end
+    kids[#kids + 1] = { type = "row", id = id .. "-ic-row", gap = 8, children = cols }
+    kids[#kids + 1] = { type = "text", id = id .. "-ic-hint", text = ctx.tr("icheck_hint"), style = "meta" }
+  end
   kids[#kids + 1] = { type = "text", id = id .. "-hint", text = ctx.tr("diag_hint"), style = "meta" }
   return { type = "column", id = id, gap = 4, children = kids }
 end
