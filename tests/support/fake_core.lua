@@ -75,6 +75,21 @@ function F.new(over)
     end
     return nil, "unsupported"
   end)
+  -- map_candidates() / map_image(id) / map_selected(): only when world.maps is given (older cores have none).
+  -- maps = { scan = n (calls answered "not_ready" first), list = { {id, w, h}, ... }, images = { [id] = png string },
+  --          selected = id | nil }
+  if w.maps then
+    local m = w.maps
+    p.map_candidates = guard("map_candidates", function()
+      if (m.scan or 0) > 0 then m.scan = m.scan - 1; return nil, "not_ready" end
+      return m.list
+    end)
+    p.map_image = guard("map_image", function(id)
+      if m.images[id] then return m.images[id] end
+      return nil, "unknown_map"
+    end)
+    p.map_selected = guard("map_selected", function() return m.selected end)
+  end
   p.info = guard("info", function() return { features = { names = true, areas = true, locations = true } } end)
   self.provider = p
 

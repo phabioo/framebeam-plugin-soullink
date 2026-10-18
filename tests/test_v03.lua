@@ -163,7 +163,7 @@ t.case("map: capture from the bottom screen, calibration, retake keeps positions
   t.ok(ui_validator.find(p, "map-hint").text:find("PokéNav AreaNav", 1, true), "instruction")
   t.eq(ui_validator.find(p, "map-take").label, "Take map from screen")
   e.act("map_capture")
-  t.eq(e.m.video.requests[1].target, { x = 40, y = 261, w = 250, h = 219 }, "ORAS suggestion inside the bottom screen")
+  t.eq(e.m.video.requests[1].target, { x = 40, y = 240, w = 320, h = 240 }, "default crop: the full bottom screen")
   t.ok(ui_validator.find(e.m.ui.trees.screen, "map-wait"), "waiting text")
   e.act("map_capture")
   t.eq(#e.m.video.requests, 1, "one pending request at a time")
@@ -190,7 +190,7 @@ t.case("map: capture from the bottom screen, calibration, retake keeps positions
   e.act("calib_step", 7) -- not one of 2/10/40
   t.eq(e.app.ui.calib.step, 2)
   e.act("calib_set")
-  t.eq(e.m.cache_files["map/coords.json"], '{"crop":{"b":0,"l":0,"r":22,"t":9},"map":"000400000011C400","routes":{"route-101":{"x":210,"y":128}}}')
+  t.eq(e.m.cache_files["map/coords.json"], '{"crop":{"b":0,"l":0,"r":0,"t":0},"map":"000400000011C400","routes":{"route-101":{"x":210,"y":128}}}')
   map = ui_validator.find(e.m.ui.trees.screen, "map")
   t.eq(#map.routes, 1); t.eq(map.routes[1].id, "route-101"); t.eq(map.routes[1].x, 210)
   -- clamped to the image
@@ -241,7 +241,7 @@ t.case("map: screens fall back to main, errors are shown per code", function()
   local e = boot(nil, { video = { screens = { { name = "main", x = 0, y = 0, w = 240, h = 160 } } } })
   e.step(); e.act("tab", 2)
   e.act("map_capture")
-  t.eq(e.m.video.requests[1].target, { x = 0, y = 14, w = 188, h = 146 }, "main screen, cropped")
+  t.eq(e.m.video.requests[1].target, { x = 0, y = 0, w = 240, h = 160 }, "main screen, full")
   local codes = { "busy", "rate_limited", "no_frame", "unknown_screen", "invalid_rect", "too_large", "unsupported", "denied", "weird" }
   for _, code in ipairs(codes) do
     e.m.video_result(code)

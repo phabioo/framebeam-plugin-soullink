@@ -1,7 +1,7 @@
 -- Run screen (design 5e), shown in the `screen` slot (and, read only, in the `run` slot of the Runs page):
 -- frame with tabs Map | Routes | Team & box | Graveyard | Event log. All manual corrections (5f) live here.
--- The Map tab shows the map captured from the game picture (app.maps); until then the Routes tab comes
--- first and the Map tab shows the instruction and the "Take map from screen" button.
+-- The Map tab shows the stored map (app.maps: taken from the game picture or chosen among the images of the
+-- game files); until then the Routes tab comes first and the Map tab offers both sources.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
 local oras = require("data.oras")
@@ -68,9 +68,9 @@ local function header(ctx)
   }
   if rules_open then kids[#kids + 1] = { type = "scroll", id = "rules-scroll", max_height = "s", children = { rules_list(ctx) } } end
   if ctx.diag ~= nil then
-    local open = ctx.ui.diag_open == true
+    local open = common.diag_open(ctx.ui)
     kids[#kids + 1] = { type = "row", id = "head-diag", gap = 8, align = "center", children = {
-      { type = "chip", id = "diag-chip", text = tr("diag_title"), action = "diag_toggle", selected = open } } }
+      { type = "chip", id = "diag-chip", text = tr(open and "diag_hide" or "diag_show"), action = "diag_toggle", selected = open } } }
     local blk = open and common.diag_block(ctx, "diag")
     if blk then kids[#kids + 1] = blk end
   end
@@ -154,7 +154,7 @@ local function routes_page(ctx)
   else
     kids[#kids + 1] = { type = "text", id = "routes-empty", text = tr("routes_empty"), style = "meta" }
   end
-  if #(view.places or {}) == 0 and not ctx.ui.diag_open then
+  if #(view.places or {}) == 0 and not common.diag_open(ctx.ui) then
     local blk = common.diag_block(ctx, "routes-diag")
     if blk then kids[#kids + 1] = blk end
   end
@@ -313,13 +313,8 @@ local function crop_section(ctx, m)
     end
     kids[#kids + 1] = { type = "row", id = "crop-row-" .. side, gap = 6, align = "center", children = btns }
   end
-  local presets = { { type = "button", id = "crop-none", label = tr("crop_none"), action = "crop_preset", value = "none", variant = "quiet" } }
-  if m.suggest then
-    presets[#presets + 1] = { type = "button", id = "crop-suggest", label = tr("crop_suggest"), action = "crop_preset",
-      value = "suggest", variant = "quiet" }
-  end
-  kids[#kids + 1] = { type = "row", id = "crop-presets", gap = 8, children = presets }
-  if m.suggest then kids[#kids + 1] = { type = "text", id = "crop-estimate", text = tr("crop_estimate"), style = "meta" } end
+  kids[#kids + 1] = { type = "row", id = "crop-presets", gap = 8, children = {
+    { type = "button", id = "crop-none", label = tr("crop_none"), action = "crop_preset", value = "none", variant = "quiet" } } }
   if m.live and m.api then
     kids[#kids + 1] = { type = "button", id = "crop-apply", label = tr(m.state == "ready" and "crop_apply" or "map_take"),
       action = "map_capture", variant = "primary" }
@@ -347,17 +342,79 @@ local function capture_block(ctx, m, retake)
   return kids
 end
 
+--- Which source the Map tab shows: "screen" (take from the game picture) or "files" (candidates of the game
+--- files). The player's choice, else the source of the stored map; only sources this Player/core offers.
+local function map_source(ctx, m)
+  local screen_ok = m.api and m.live
+  local files_ok = m.live and m.files and m.files.avail
+  local want = ctx.ui.map_src or m.source
+  if want == "files" and files_ok then return "files", screen_ok, files_ok end
+  if screen_ok then return "screen", screen_ok, files_ok end
+  return files_ok and "files" or "screen", screen_ok, files_ok
+end
+
+--- Source switch: only when both sources exist.
+local function source_row(ctx, src, screen_ok, files_ok)
+  if not (screen_ok and files_ok) then return nil end
+  local tr = ctx.tr
+  return { type = "row", id = "map-src", gap = 8, align = "center", children = {
+    { type = "chip", id = "msrc-screen", text = tr("map_src_screen"), action = "map_src:screen", selected = src == "screen" },
+    { type = "chip", id = "msrc-files", text = tr("map_src_files"), action = "map_src:files", selected = src == "files" } } }
+end
+
+--- Browse the images the core found in the game files: "n of N", preview, previous / next, "Use this map".
+local function files_section(ctx, m)
+  local tr, f = ctx.tr, m.files
+  local kids = { { type = "text", id = "mf-hint", text = tr("map_files_hint"), style = "meta" } }
+  if f.state ~= "done" then
+    kids[#kids + 1] = { type = "text", id = "mf-wait", text = tr("map_files_searching"), style = "meta" }
+  elseif f.n == 0 or not f.cand then
+    kids[#kids + 1] = { type = "text", id = "mf-none", text = tr("map_files_none"), style = "meta" }
+  else
+    local c = f.cand
+    local size = (c.w and c.h) and tr("map_files_size", { w = c.w, h = c.h }) or ""
+    kids[#kids + 1] = { type = "text", id = "mf-pos", style = "body",
+      text = tr("map_files_pos", { n = f.idx, total = f.n }) .. (size ~= "" and (" · " .. size) or "") }
+    if c.src then
+      kids[#kids + 1] = { type = "image", id = "mf-img", src = c.src, size = "l", label = tr("map_files_pos", { n = f.idx, total = f.n }) }
+    else
+      kids[#kids + 1] = { type = "text", id = "mf-load", style = "meta", text = tr(c.failed and "map_files_failed" or "map_files_loading") }
+    end
+    if c.suggested then kids[#kids + 1] = { type = "text", id = "mf-sug", text = tr("map_files_suggested"), style = "meta" } end
+    if c.current then kids[#kids + 1] = { type = "text", id = "mf-cur", text = tr("map_files_current"), style = "meta" } end
+    local row = {}
+    if f.n > 1 then
+      row[#row + 1] = { type = "button", id = "mf-prev", label = tr("map_files_prev"), action = "map_prev", variant = "secondary" }
+      row[#row + 1] = { type = "button", id = "mf-next", label = tr("map_files_next"), action = "map_next", variant = "secondary" }
+    end
+    if c.src and not c.current then
+      row[#row + 1] = { type = "button", id = "mf-use", label = tr("map_files_use"), action = "map_use", variant = "primary" }
+    end
+    if #row > 0 then kids[#kids + 1] = { type = "row", id = "mf-row", gap = 8, children = row } end
+  end
+  if f.error then
+    kids[#kids + 1] = { type = "text", id = "mf-error", style = "meta",
+      text = tr("map_err_" .. (MAP_ERRORS[f.error] and f.error or "failed")) }
+  end
+  return { type = "section", id = "mapfiles", title = tr("map_src_files"), children = kids }
+end
+
 local function map_page(ctx)
   local view, m, tr = ctx.view, ctx.map, ctx.tr
+  local src, screen_ok, files_ok = map_source(ctx, m)
+  local switch = source_row(ctx, src, screen_ok, files_ok)
   if m.state ~= "ready" then
-    -- no image yet: empty state (5e), instruction and the capture button; older Player: update hint
-    if not m.api then
+    -- no image yet: empty state (5e), then the chosen source; older Player and no files: update hint
+    if not screen_ok and not files_ok then
       return { type = "column", id = "page-map", gap = 12, children = {
-        { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_no_api") } } }
+        { type = "empty", id = "map-empty", title = tr("map_title"), text = tr(m.api and "map_empty_text" or "map_no_api") } } }
     end
     local kids = { { type = "empty", id = "map-empty", title = tr("map_title"), text = tr("map_empty_text") } }
-    for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
-    if m.live then
+    kids[#kids + 1] = switch
+    if src == "files" then
+      kids[#kids + 1] = files_section(ctx, m)
+    else
+      for _, b in ipairs(capture_block(ctx, m, false)) do kids[#kids + 1] = b end
       kids[#kids + 1] = { type = "row", id = "map-take-row", gap = 8, children = {
         { type = "button", id = "map-take", label = tr("map_take"), action = "map_capture", variant = "primary" },
         { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
@@ -403,18 +460,21 @@ local function map_page(ctx)
   if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
   local acts = { { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
     variant = calib and "primary" or "quiet" } }
-  if m.live and m.api then
+  if screen_ok then
     acts[#acts + 1] = { type = "button", id = "map-retake", label = tr("map_retake"), action = "map_capture", variant = "quiet" }
-  end
-  if m.live and m.api then
     acts[#acts + 1] = { type = "button", id = "map-crop", label = tr("crop_open"), action = "crop_toggle",
       variant = ctx.ui.crop_open and "primary" or "quiet" }
   end
   acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
     confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
   local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
-  for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
-  if ctx.ui.crop_open and m.live and m.api then kids[#kids + 1] = crop_section(ctx, m) end
+  kids[#kids + 1] = switch
+  if src == "files" then
+    kids[#kids + 1] = files_section(ctx, m)
+  else
+    for _, b in ipairs(capture_block(ctx, m, true)) do kids[#kids + 1] = b end
+  end
+  if ctx.ui.crop_open and screen_ok then kids[#kids + 1] = crop_section(ctx, m) end
   if calib then kids[#kids + 1] = calibration(ctx, m) end
   return { type = "column", id = "page-map", gap = 12, children = kids }
 end
