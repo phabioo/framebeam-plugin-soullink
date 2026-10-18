@@ -193,7 +193,7 @@ function A:refresh_areas()
 end
 
 --- Game data diagnostics of pokemon-core >= 0.3.2 (`diagnostics()`, a flat table of numbers and strings), only
---- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open (it is open until the player closes it). A core
+--- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open (it is closed until the player opens it). A core
 --- without it (unsupported) leaves self.diag nil and the block is omitted.
 function A:refresh_diag()
   if self.viewing or self.diag_unsupported then return end
@@ -3456,8 +3456,8 @@ function C.diag_lines(d)
   return lines
 end
 
---- The "Game data" block is open unless the player closed it (state kept in ui.diag_open).
-function C.diag_open(ui) return ui == nil or ui.diag_open ~= false end
+--- The "Game data" block is closed until the player opens it with the chip (state kept in ui.diag_open).
+function C.diag_open(ui) return ui ~= nil and ui.diag_open == true end
 
 --- "Game data" block (diagnostics of the core, one wrapped line per key group and a hint), or nil without
 --- diagnostics. `id` makes the block ids unique when it appears twice.

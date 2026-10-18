@@ -80,13 +80,17 @@ end)
 
 -- ---------------------------------------------------------------- 2. diagnostics
 
-t.case("diagnostics: Game data block is open by default, one wrapped line per key group, toggle keeps its state", function()
+t.case("diagnostics: Game data block is closed by default, opened with the chip, one wrapped line per key group, state kept", function()
   local e = boot()
   e.step(); e.step(6000)
   local chip = e.find("diag-chip")
   t.ok(chip, "toggle present with a core that has diagnostics()")
-  t.eq(chip.text, "Hide game data", "clearly labelled")
-  t.eq(chip.selected, true)
+  t.eq(chip.text, "Show game data", "clearly labelled")
+  t.ok(not chip.selected)
+  t.eq(e.find("diag-1"), nil, "closed by default")
+  e.act("diag_toggle")
+  t.eq(e.find("diag-chip").text, "Hide game data")
+  t.eq(e.find("diag-chip").selected, true)
   -- groups by prefix: areas, first, ids, language, lines, locations, revision, text, zo, zone, zones
   local l1 = e.find("diag-1")
   t.ok(l1 and l1.wrap == true, "wrapped line")
@@ -96,22 +100,20 @@ t.case("diagnostics: Game data block is open by default, one wrapped line per ke
   for i = 1, 20 do local l = e.find("diag-" .. i); if l then found[#found + 1] = l.text end end
   local all = table.concat(found, " | ")
   t.ok(all:find("zone_files=3", 1, true) and all:find("zones_state=ready zones_with_encounters=40", 1, true), "every key shown")
+  e.step(6000); e.step(6000)
+  t.ok(e.find("diag-1"), "stays open across refreshes")
   e.act("diag_toggle")
   t.eq(e.find("diag-1"), nil, "closed")
   t.eq(e.find("diag-chip").text, "Show game data")
   e.step(6000); e.step(6000)
   t.eq(e.find("diag-1"), nil, "stays closed across refreshes")
-  e.act("diag_toggle")
-  t.ok(e.find("diag-1"), "open again")
-  e.step(6000); e.step(6000)
-  t.ok(e.find("diag-1"), "stays open across refreshes")
 end)
 
 t.case("diagnostics: shown in the Routes tab while the place list is empty", function()
   local e = boot({ world = { areas = {}, locations = {} }, setup = function(c)
     c:off("areas", "not_ready"); c:off("locations", "not_ready") end })
   e.step(); e.step(6000)
-  e.act("diag_toggle") -- closed on the overview: the Routes tab shows it while no places are known
+  -- closed by default on the overview: the Routes tab shows it while no places are known
   t.ok(e.find("routes-diag-1"), "block in the Routes tab")
   e.core:on("areas"); e.core:on("locations")
   e.core.world.areas = { { id = 301, name = "Synthetic Area One", zones = { 10 }, encounters = {} } }

@@ -175,7 +175,7 @@ function A:refresh_areas()
 end
 
 --- Game data diagnostics of pokemon-core >= 0.3.2 (`diagnostics()`, a flat table of numbers and strings), only
---- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open (it is open until the player closes it). A core
+--- asked once to learn whether the core has them, then every 5 s while the place list is empty or the "Game data" block is open (it is closed until the player opens it). A core
 --- without it (unsupported) leaves self.diag nil and the block is omitted.
 function A:refresh_diag()
   if self.viewing or self.diag_unsupported then return end
