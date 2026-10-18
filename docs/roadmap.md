@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.6.1 (map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.6.2 (map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -34,6 +34,11 @@ Status: v0.6.1 (map from the game files or the game picture, full-screen default
 ## v0.6.1 Game data closed by default
 
 - The "Game data" block is closed by default again; the chip "Show game data" opens it and the choice is kept across refreshes. Grouping by key prefix and the no-cap behaviour are unchanged.
+
+## v0.6.2 corrections and detection agree, icon check
+
+- Fix (found in a real Omega Ruby run): "Doesn't count" on a route only changed the view; detection kept the first encounter (missed / encounter) and rejected the next encounter as "used" and the catch as "extra". Now the effective corrections (`doesnt_count`, `mark_missed`, `add`, with reverts) are passed to detection as route overrides, so a later encounter on a reopened route is the first one and its catch counts; the view and detection use the same function (`corrections.route_overrides`). Entries created after a correction carry the correction seq (`rs`), older stored states load unchanged. The dupes clause ignores mons that "don't count".
+- Game data block: "Icon check" with the 4 variants from pokemon-core `icon_variants(species, form?)` (>= 0.3.4) for the first team creature, asked once per opening; hidden with an older core.
 
 ## Later
 

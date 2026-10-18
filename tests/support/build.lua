@@ -3,6 +3,7 @@ local util = require("model.util")
 local detect = require("model.detect")
 local rules = require("model.rules")
 local events = require("model.events")
+local corrections = require("model.corrections")
 
 local B = {}
 
@@ -62,6 +63,10 @@ function B.tracker(uid, cfg, log, opts)
   end
   function t:step()
     local facts
+    if self.log then -- corrections about this player shape detection (what the controller passes)
+      self.opts.overrides, self.opts.excluded =
+        corrections.route_overrides(corrections.effective(self.log.events), self.uid, self.st)
+    end
     self.st, facts = detect.diff(self.st, self:snapshot(), self.cfg, self.opts)
     self.last_facts = facts
     if self.log then self.log:facts(self.uid, facts) end

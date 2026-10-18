@@ -272,6 +272,8 @@
   "map_files_use": "Use this map",
   "diag_title": "Game data",
   "diag_hint": "Send a screenshot of this if places or names are missing.",
+  "icheck_title": "Icon check",
+  "icheck_hint": "Tell us which picture looks right",
   "crop_open": "Crop map",
   "crop_title": "Crop map",
   "crop_hint": "Percent of the game screen cut off on each side. The map is taken again with this crop; it only shows what the game displays right now.",

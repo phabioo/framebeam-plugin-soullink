@@ -1,6 +1,6 @@
 # Architecture
 
-Status: v0.6.1 (map from the game files or the game picture, full-screen default crop, "Game data" block with every key; place picker with every place, compact panel, run screen in the screen slot, detection from pokemon-core 0.3 / 0.3.1). Everything below is design against plugin API v1 as documented in `docs/guides/plugin-api.md` of the FrameBeam repository; open API items are listed at the end.
+Status: v0.6.2 (corrections shape detection, icon check; map from the game files or the game picture, full-screen default crop, "Game data" block with every key; place picker with every place, compact panel, run screen in the screen slot, detection from pokemon-core 0.3 / 0.3.1). Everything below is design against plugin API v1 as documented in `docs/guides/plugin-api.md` of the FrameBeam repository; open API items are listed at the end.
 
 ## Layout
 
@@ -45,7 +45,7 @@ Place keys: `starter`, `loc:<location name id>` (an encounter area of the game, 
 
 ### `model.detect`
 
-- `diff(prev, snap, cfg, opts) -> new_state, facts`. `prev` is never modified. `opts`: `family(species)` (default identity), `areas` (`{ set, order, names }` from `areas()`; nil while not ready), `areas_unsupported`, `zones` (fallback table), `names.species(id)`, `types(species, form)`, `partner_types(route)`, `first` (`auto`|`baseline`|`starter`), `game`.
+- `diff(prev, snap, cfg, opts) -> new_state, facts`. `prev` is never modified. `opts`: `overrides` / `excluded` (from `corrections.route_overrides`, see below; nil = none), `family(species)` (default identity), `areas` (`{ set, order, names }` from `areas()`; nil while not ready), `areas_unsupported`, `zones` (fallback table), `names.species(id)`, `types(species, form)`, `partner_types(route)`, `first` (`auto`|`baseline`|`starter`), `game`.
 - `set_place(prev, input, name, zone, loc) -> new_state, fact|nil`: manual place; `input` is a place key or free text (becomes `place:<text>`), empty clears; `zone` / `loc` (what the core reports right now) are stored with it.
 
 Rules of the diff:
@@ -75,14 +75,14 @@ Facts (`kind`): `place {key?, name?, zone?, loc?, manual, previous?}`, `catch {m
   mons = { ["<hex8>"] = { species, form?, nickname?, nicknamed? (false only), level, shiny? (true only),
            route?, where = "team"|"box"|"gone", deaths? (absent = 0), hp?, mhp? (max hp), gift? (true only),
            why? = "extra"|"dupe"|"shiny"|"additional"|"gift"|"type", miss?, ty? (primary type id) } },
-  routes = { [route key] = { status = "encounter"|"caught"|"missed", mon?, species?, kind? = "wild"|"horde"|"starter"|"gift" } },
+  routes = { [route key] = { status = "encounter"|"caught"|"missed", mon?, species?, kind? = "wild"|"horde"|"starter"|"gift", rs? } },
   order = { "<hex8>", ... }, badges = n,
   names = { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } },
   areas = { <location id>, ... }, places = { <location id>, ... }, pend? = { since?, zone?, loc? },
   enc_seq = n, zones? }
 ```
 
-Place keys: `starter`, `loc:<location id>`, `place:<text>`, legacy `route-101`..`route-134`. A mon counts when `routes[mon.route].mon` is its id.
+Place keys: `starter`, `loc:<location id>`, `place:<text>`, legacy `route-101`..`route-134`. A mon counts when `routes[mon.route].mon` is its id. `rs` (reset stamp, 0.6.2): seq of the route correction that was in effect when the entry was created; absent in states of 0.6.1 and older (= 0).
 
 ### `model.events`
 
@@ -102,6 +102,8 @@ Event type `soullink.correction`, `source = "manual"`, payload at most 4 KiB. `p
 | `mark_dead` | `user, mon, reason?` | one more death |
 | `set_gift` | `user, mon, gift = bool` | gift: group state `gift`, no link |
 | `revert` | `target = seq, reason?` | cancels the correction event `target`; a reverted revert cancels nothing |
+
+**Corrections and detection (0.6.2).** The own state is never rewritten by a correction. Instead `corrections.effective(events)` (valid corrections in seq order, reverts applied) and `corrections.route_overrides(effective, user, st) -> overrides, excluded` describe what the corrections do to one player's routes: `overrides[route] = { kind = "reopen"|"missed"|"taken", seq, mon? }` (`doesnt_count` reopens a route or the route of an excluded mon, `mark_missed` closes a route that no counted mon holds, `add` lets the hand-added mon `add-<seq>` hold a free route) and `excluded[mon]` (mons that no longer count). A route entry whose `rs` is below the override's seq predates the correction and is shadowed by it; an entry created later (detection stamps `rs = override seq`) is valid. A correction therefore applies to what happened before it; a later encounter on a reopened route is the first one. The view (`cell_state`, `assign_slots`) and detection (`detect.live_entry`: encounters, catches, the pending encounter, missed expiry, the dupes check) both use the same overrides; the controller computes them from the cached events for its own user (any author) before every `detect.diff`. Reverting a correction removes its override, so the stored entry is visible again; if a new entry replaced the old one in between, the old one is gone (open point).
 
 ### `model.view`
 
@@ -171,4 +173,6 @@ Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui
 - Map from the game files (0.6.0, `app.maps`): the Map tab shows a source switch (chips `map_src:screen` / `map_src:files`) when both sources exist; the choice is `ui.map_src`, else the source of the stored map. `maps:files_step(now)` runs every tick (not in the run view): `fb.call("pokemon.core", "map_candidates")` every 3 s until it returns a list (`nil, "not_ready"` = still scanning; shown as "Still searching the game files"; the core gives no progress, so there is no count before the list); up to 40 entries `{ id, w, h }`; `map_selected()` is asked once and its id is marked as suggested. A call error or `unsupported` turns the option off for good (no chip, no section). The shown candidate (`idx`, "Image n of N", actions `map_prev` / `map_next`, wrapping) gets its preview with `map_image(id)` (`nil, "not_ready"` is retried after 2 s, any other failure marks the image as not shown), stored as `map/cand-<idx>.png` and shown as `image` `cache:map/cand-<idx>.png`. "Use this map" (`map_use`) writes the PNG to `map/<game id>.png` (and `map/current.txt`) like a capture, sets crop 0, rescales the recorded positions from the old image (screen fraction kept), and records `"source":"files","file":"<candidate id>"` in `map/coords.json` (omitted for a captured map). A capture sets the source back to the screen; "Remove map" drops the source and keeps the positions. Without `fb.video` the files source is the only one; in the shell run view no core call is made. Open: no scan progress from the core; candidate ids are only stable while the game files do not change.
 - Core lists (0.5.1): `areas()` and `locations()` are asked again (`A:ask_list`) on `nil, "not_ready"|"failed"` (2 s before the first list, then 5 s), on an empty list and on entries without a name; only a non-empty, fully named list is final and is refreshed every 30 s (the info is rebuilt when it changed). `unsupported` stays permanent. pokemon-core 0.3.2 entries with `source = "text"` (no zones, no encounters) are ordinary places.
 - Game data (0.5.1): the controller asks `pokemon.core` `diagnostics()` (pokemon-core >= 0.3.2, optional; a flat table of numbers/strings/booleans, shown as sorted `key=value` text under the title "Game data", one wrapped line per key group = the text before the first `_` (every key is shown), with a hint to send a screenshot; 0.6.0) once to learn whether it exists, then every 5 s while the place list is empty or the block is open. The run screen header has a chip (`diag_toggle`, "Hide game data" / "Show game data") only when the core answered; the block is closed by default and opened with the chip (`ui.diag_open == true`, kept across refreshes; 0.6.1); the Routes tab shows the block by itself while `view.places` is empty and the header block is closed. A core without `diagnostics()` ("unsupported") means no chip and no block.
+- Icon check (0.6.2): while the Game data block is open the controller asks `pokemon.core` `icon_variants(species, form?)` (pokemon-core >= 0.3.4, optional) once per opening for the first creature of the team as the core reports it (`nil, "not_ready"` is retried every 5 s, `unsupported` switches it off for good). Up to 4 `{ label = "A".."D", desc, png }` entries are written to the cache as `diag/icon-<label>.png` and shown in a row inside the block (`image` size `m`, label and description under each, hint "Tell us which picture looks right"). Without the function the section is absent. Open: the cache file names are reused between openings, so the host must reload a changed file of the same name.
+- Corrections that move a mon (`set_group`) do not reopen the route the mon was detected on; detection still treats that route as used.
 - Release: the `.fbplugin` is unsigned; signing and the Hub upload flow are open. Requires pokemon-core `>=0.3.1` (`locations()` is used when answered, the plugin also works without it); version 0.4.1 of this plugin.

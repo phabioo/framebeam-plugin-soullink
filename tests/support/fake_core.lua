@@ -1,4 +1,4 @@
--- Fake `pokemon.core` implementing the v0.3 contract plus locations() of v0.3.1 and diagnostics() of v0.3.2 (synthetic data only; names are made up by code).
+-- Fake `pokemon.core` implementing the v0.3 contract plus locations() of v0.3.1 and diagnostics() of v0.3.2 and icon_variants() of v0.3.4 (synthetic data only; names are made up by code).
 --   local core = fake_core.new()            core.provider = table for mock.set_provider("pokemon.core", ...)
 --   core.world: team, box (flat list of box 1), location, badges, battle, areas, species types ...
 --   core.world.locations: list of { id, name, zones, has_encounters } (v0.3.1); core:off("locations", "not_ready")
@@ -90,6 +90,19 @@ function F.new(over)
     end)
     p.map_selected = guard("map_selected", function() return m.selected end)
   end
+  -- v0.3.4 icon_variants(species, form?): up to 4 { label = "A".."D", desc, png }. world.variants = { count = n (default 4),
+  -- scan = n (answers "not_ready" first) }; core:off("icon_variants", "unsupported") = older core.
+  w.variants = w.variants or {}
+  p.icon_variants = guard("icon_variants", function(species, form)
+    local v = w.variants
+    if (v.scan or 0) > 0 then v.scan = v.scan - 1; return nil, "not_ready" end
+    local out = {}
+    for i = 1, v.count or 4 do
+      local label = string.char(64 + i)
+      out[i] = { label = label, desc = "Synthetic variant " .. label .. " of " .. tostring(species), png = "PNG-" .. label .. "-" .. tostring(species) .. "-" .. tostring(form or 0) }
+    end
+    return out
+  end)
   p.info = guard("info", function() return { features = { names = true, areas = true, locations = true } } end)
   self.provider = p
 
