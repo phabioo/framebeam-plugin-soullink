@@ -185,7 +185,7 @@ t.case("without fb.ui.open: meta text in the panel, no buttons, no in-panel run 
   local p = e.m.ui.trees.panel
   t.eq(ui_validator.find(p, "h-open"), nil)
   t.eq(ui_validator.find(p, "f-open"), nil)
-  t.eq(ui_validator.find(p, "f-update").text, "Update FrameBeam to open the run screen")
+  t.eq(ui_validator.find(p, "f-update").text, "Update Uzume to open the run screen")
   e.act("open_run")
   e.act("open-run", nil, "hotkey")
   t.eq(#e.m.ui.opened, 0)
@@ -398,7 +398,7 @@ t.case("encounters: hordes per rule, shiny clause, dupes clause", function()
   e.step()
   t.eq(e.state().routes["loc:302"], nil, "dupe: not counted")
   -- hordes count with the rule on
-  local e2 = boot({ settings = { ["net.framebeam.soullink"] = { mode = "soullink", rules = { hordes_count = true } } } })
+  local e2 = boot({ settings = { ["uzume.soullink"] = { mode = "soullink", rules = { hordes_count = true } } } })
   e2.step()
   e2.core:go(303, "Synthetic Area Three", 12)
   e2.core:encounter({ species = 912, horde = true })
@@ -503,7 +503,7 @@ t.case("pairs-differ-primary-type: the clause uses species_info and the partners
   jt:start({ 0xA1, 0xA2 })
   jt.st.routes["loc:301"] = { status = "caught", mon = "000000c1", species = 30, kind = "wild" }
   jt.st.mons["000000c1"] = { species = 30, level = 5, where = "box", route = "loc:301", ty = 4, nickname = "Pal" }
-  local settings = { ["net.framebeam.soullink"] = { mode = "soullink", rules = { pairs_differ_primary_type = true } } }
+  local settings = { ["uzume.soullink"] = { mode = "soullink", rules = { pairs_differ_primary_type = true } } }
   local e = boot({ settings = settings, states = { ["u-jonas"] = jt.st }, setup = function(c)
     c.world.types[910] = { 4 }; c.world.types[911] = { 7, 4 }
   end })

@@ -1,9 +1,9 @@
 -- Run rules: defaults and parsing of the run settings.
 -- Settings live in the run settings under the plugin id:
---   run.settings["net.framebeam.soullink"] = { mode = "soullink", rules = { dupes_clause = false, ... } }
+--   run.settings["uzume.soullink"] = { mode = "soullink", rules = { dupes_clause = false, ... } }
 local R = {}
 
-R.PLUGIN_ID = "net.framebeam.soullink"
+R.PLUGIN_ID = "uzume.soullink"
 R.MODES = { nuzlocke = true, soullink = true }
 
 --- Default rule switches (all are booleans).

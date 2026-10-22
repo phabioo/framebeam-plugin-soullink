@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.6.2 (map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
+Status: v0.7.0 (new plugin ids uzume.soullink and uzume.soullink-core; the screen slot is the run tab of the Uzume app; v0.6.2: map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on FrameBeam plugin API v1 (0.11); see https://github.com/phabioo/framebeam `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -34,6 +34,10 @@ Status: v0.6.2 (map from the game files or the game picture, full-screen default
 ## v0.6.1 Game data closed by default
 
 - The "Game data" block is closed by default again; the chip "Show game data" opens it and the choice is kept across refreshes. Grouping by key prefix and the no-cap behaviour are unchanged.
+## v0.7.0 Uzume plugin ids
+
+- New plugin ids for Uzume (ADR 0030 D7 of the Uzume app): `uzume.soullink` (this plugin) and `uzume.soullink-core` (requires `>=0.4.0`). No migration and no compatibility alias; run settings are read under the new id. The Uzume app has no sidebar screen any more: the `screen` slot is the plugin tab in the run view ("run tab"), and in a game `fb.ui.open("screen")` still opens the sheet. Behaviour is unchanged.
+
 
 ## v0.6.2 corrections and detection agree, icon check
 
