@@ -2,7 +2,7 @@ local t = require("t")
 local rules = require("model.rules")
 local oras = require("data.oras")
 local B = require("build")
-local ID = "net.framebeam.soullink"
+local ID = "uzume.soullink"
 
 t.case("defaults", function()
   local d = rules.defaults()

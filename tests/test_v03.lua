@@ -277,7 +277,7 @@ t.case("map: an older Player without fb.video says so and nothing else breaks", 
   t.eq(ui_validator.find(p, "tabs").tabs[2], "Map")
   e.act("tab", 2)
   p = e.m.ui.trees.screen
-  t.ok(ui_validator.find(p, "map-empty").text:find("Update the Player", 1, true))
+  t.ok(ui_validator.find(p, "map-empty").text:find("Update Uzume", 1, true))
   t.eq(ui_validator.find(p, "map-take"), nil)
   e.act("map_capture") -- ignored
   e.act("tab", 3)
