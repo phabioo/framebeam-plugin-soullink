@@ -1,8 +1,8 @@
 # Design
 
-UI design of the SoulLink & Nuzlocke plugin: screens 5a-5i from the Claude Design handoff (Turn 6, part 1 and 2) and the correction pass of 2026-10-11 (Turn 7, ids with `-2`). Accepted by Fabio on 2026-10-11. Plugin API v1 is planned (FrameBeam 0.11) and not implemented; this is design, not a description of working code.
+UI design of the SoulLink & Nuzlocke plugin: screens 5a-5i from the Claude Design handoff (Turn 6, part 1 and 2) and the correction pass of 2026-10-11 (Turn 7, ids with `-2`). Accepted by Fabio on 2026-10-11. At the time of the handoff plugin API v1 was planned (0.11) and not implemented; this is design, not a description of working code.
 
-Platform design (tokens, slots, blocks, component sheet, Player and Hub shell, hotkeys, notices): https://github.com/phabioo/framebeam/tree/main/docs/design. The screens here use only platform blocks; the platform components they import (`game-header`, `game-panel`, `settings-row`, `block-sheet`, `plugin-settings-screen`, `framebeam-mark`, `diag-overlay`) are not copied here.
+Platform design (tokens, slots, blocks, component sheet, Player and Hub shell, hotkeys, notices): https://github.com/phabioo/uzume/tree/main/docs/design. The screens here use only platform blocks; the platform components they import (`game-header`, `game-panel`, `settings-row`, `block-sheet`, `plugin-settings-screen`, `framebeam-mark`, `diag-overlay`) are not copied here.
 
 All names are fictional placeholders: game "Coral Saga: Ember / Tide", region "Marisol", creatures such as "Tidepup" (drawn by `creature-icon` as colored shapes), places, characters and items. No game assets, no real creature, place or character names, no hosts except `hub.example.com`. "Nintendo 3DS" and "Azahar" appear only as platform and core names.
 
@@ -51,7 +51,7 @@ Status: planned, nothing built. Spec in [soullink.md](soullink.md).
 | 5h Notices | [5h](soullink.md#5h-notices) | 5a-5i `5h`, 189-198 | valid. Platform toast spec: 4g, 4g-2 |
 | 5i Settings | [5i](soullink.md#5i-settings) | 5a-5i `5i`, 246-257 | valid; generated from the plugin schema |
 | Handoff table (purpose, states, blocks, open) | - | 5e-5g, 73-79 (data 105-114) | source of the open questions |
-| Component sheet, change list (round 2) | platform | round 2, 391-392 and 398 (data 475-487) | platform sheet in the FrameBeam repository |
+| Component sheet, change list (round 2) | platform | round 2, 391-392 and 398 (data 475-487) | platform sheet in the Uzume repository |
 
 Stale wording in the source: the handoff table row 5c/5d (5e-5g line 108) still says "death flash"; the decision below applies. The row 5b still says "light" (light variant removed in round 2). `soullink-panel` still has an unused `theme: light` option.
 
@@ -62,7 +62,7 @@ Fabio, 2026-10-11 (accepted corrections of round 2):
 - Player colors are identity only and never carry status. Dark / light: Max `#6f9cff` / `#2f5fd0`, Lena `#f07ab8` / `#b8327a`, Jonas `#a6d65a` / `#4d7a14`, Sam `#b39cf5` / `#6a4fc4` (verified against `run-screen`, `region-map`, `soullink-panel` and the round-2 legend). Light values at least 4.5:1 on `#f6f5f2`. Cyan (`#3cbfd8`) is for open, selection and focus.
 - Death is grey + x mark, never red; no red flash. A death in your link groups expands the HUD widget for 3 s (off with Reduce motion), then the notice carries the detail. Red stays for danger actions and low HP.
 - In-game views (panel, HUD, tiles, header) stay dark in both themes. Light applies to Library, Settings, the run screen and the Hub.
-- Ctrl+H shows or hides the plugin's HUD widget and does nothing else. Expanding is click or controller A. Plugin hotkeys here: Ctrl+H, Ctrl+D (encounter doesn't count), Ctrl+R (open run); FrameBeam keys always win, a conflicting plugin key stays unassigned (platform 3f-4).
+- Ctrl+H shows or hides the plugin's HUD widget and does nothing else. Expanding is click or controller A. Plugin hotkeys here: Ctrl+H, Ctrl+D (encounter doesn't count), Ctrl+R (open run); Uzume keys always win, a conflicting plugin key stays unassigned (platform 3f-4).
 - Amber is the warning tone (unverified, paused, pending, manual, mid HP). Plugins pick a tone, never a hex.
 - The game is a Nintendo 3DS title played with the core Azahar (top screen 400 x 240, bottom 320 x 240).
 

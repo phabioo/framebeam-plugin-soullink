@@ -2,13 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-framebeam-plugin-soullink is the SoulLink/Nuzlocke plugin. A group of 2 to 4 players runs a Nuzlocke alone or a SoulLink together: the plugin detects routes, encounters, catches and deaths through `framebeam-plugin-pokemon-core`, applies the run rules, allows manual correction of everything, and shows teams, routes and a region map in FrameBeam (in-game tab, HUD, Multiview overlay, run screen, Hub run board). Run state lives on the user's own FrameBeam Hub.
+uzume-plugin-soullink is the SoulLink/Nuzlocke plugin. A group of 2 to 4 players runs a Nuzlocke alone or a SoulLink together: the plugin detects routes, encounters, catches and deaths through `uzume-plugin-soullink-core`, applies the run rules, allows manual correction of everything, and shows teams, routes and a region map in Uzume (in-game tab, HUD, Multiview overlay, run screen, run board). Run state lives on the user's own Uzume server.
 
-## Relation to FrameBeam
+## Relation to Uzume
 
-- Plugin for [FrameBeam](https://github.com/phabioo/framebeam) (self-hosted retro gaming platform). Interface: `docs/architecture/12-plugins.md` in the FrameBeam repository.
-- Plugin API v1 ships with FrameBeam 0.11 (`docs/guides/plugin-api.md` there). Open API items are marked open, never invented.
-- Runtime: Lua 5.4 in the FrameBeam sandbox; UI only as declarative building blocks (no QML).
+- Plugin for [Uzume](https://github.com/phabioo/uzume) (self-hosted retro gaming platform). Interface: `docs/architecture/12-plugins.md` and `docs/guides/plugin-api.md` in the Uzume repository.
+- Plugin API v1 ships with Uzume since 0.11 (`docs/guides/plugin-api.md` there). Open API items are marked open, never invented.
+- Runtime: Lua 5.4 in the Uzume sandbox; UI only as declarative building blocks (no QML).
 
 ## Working rules
 
@@ -32,11 +32,11 @@ framebeam-plugin-soullink is the SoulLink/Nuzlocke plugin. A group of 2 to 4 pla
 
 ## Status and commands
 
-- Status: v0.7.0 (plugin ids uzume.soullink and uzume.soullink-core, run screen slot shown as the "run tab" in the Uzume app; v0.6.2: rules, detection from pokemon-core v0.3 with encounter areas and names from the game, link groups, corrections, compact in-game panel, region map from the game picture (`fb.video.capture`, full screen by default, adjustable crop, rescaled positions) or from the images of the game files (pokemon-core `map_candidates` / `map_image`, browse and "Use this map"), place picker with every place, optional pokemon-core `diagnostics()` ("Game data": every key, grouped by prefix, closed by default, opened with a chip), run screen opened with `fb.ui.open`, Hub board; 0.6.2: corrections reopen / close routes for detection too, "Icon check" in the Game data block). Layout: `docs/architecture.md`.
+- Status: v0.7.0 (plugin ids uzume.soullink and uzume.soullink-core, run screen slot shown as the "run tab" in the Uzume app; v0.6.2: rules, detection from pokemon-core v0.3 with encounter areas and names from the game, link groups, corrections, compact in-game panel, region map from the game picture (`fb.video.capture`, full screen by default, adjustable crop, rescaled positions) or from the images of the game files (pokemon-core `map_candidates` / `map_image`, browse and "Use this map"), place picker with every place, optional pokemon-core `diagnostics()` ("Game data": every key, grouped by prefix, closed by default, opened with a chip), run screen opened with `fb.ui.open`, run board; 0.6.2: corrections reopen / close routes for detection too, "Icon check" in the Game data block). Layout: `docs/architecture.md`.
 - Sources are modules in `src/`; `lua5.4 tools/bundle.lua` generates the committed `plugin/main.lua` (list new modules in `src/modules.txt`; `--check` fails when stale). Tests: `lua5.4 tests/run.lua` (fake `fb` with `fb.run`, `fb.ui` validator and a fake `pokemon.core`). Package: `python3 tools/package.py`; a tag `vX.Y.Z` builds the `.fbplugin` release asset (`.github/workflows/release.yml`).
 - The SessionStart hook `.claude/hooks/session-start.sh` only prepares cloud sessions (installs `lua5.4` via apt if missing).
 
 ## Pointers
 
 - Plan and status: `docs/roadmap.md`. Workflow, roles and brief template: `docs/workflow.md`. UI design: `docs/design/README.md`.
-- FrameBeam docs: https://github.com/phabioo/framebeam (`docs/architecture/12-plugins.md`, `docs/adr/0023-plugins.md`).
+- Uzume docs: https://github.com/phabioo/uzume (`docs/architecture/12-plugins.md`, `docs/adr/0023-plugins.md`).

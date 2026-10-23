@@ -1,6 +1,6 @@
 # SoulLink screens
 
-Per-screen specification of the handoff in `source/` (see [README.md](README.md) for source files, status and decisions). All names, numbers, versions and creatures are fictional mock values. Layout dimensions, tokens and blocks are the platform's: https://github.com/phabioo/framebeam/tree/main/docs/design. Line ranges refer to the file named in the heading; "5a-5i" = `source/soullink-5a-5i.dc.html`, "R2" = `source/plugins-round-2.dc.html`, "5e-5g" = `source/soullink-5e-5g-run.dc.html`.
+Per-screen specification of the handoff in `source/` (see [README.md](README.md) for source files, status and decisions). All names, numbers, versions and creatures are fictional mock values. Layout dimensions, tokens and blocks are the platform's: https://github.com/phabioo/uzume/tree/main/docs/design. Line ranges refer to the file named in the heading; "5a-5i" = `source/soullink-5a-5i.dc.html`, "R2" = `source/plugins-round-2.dc.html`, "5e-5g" = `source/soullink-5e-5g-run.dc.html`.
 
 Player colors: Max blue, Lena pink, Jonas lime, Sam violet (hex in README). They mark who, never status. Status colors: cyan open / selection, green caught, grey missed / not a route / dead (with x mark), amber manual / pending / paused, red only danger actions and low HP.
 
@@ -125,7 +125,7 @@ Round-1 `5f-2` and `5f-3` (5a-5i 211-224) are reference only (group 7, old text)
 | info | grey | "Jonas caught Voltwing on Route 110." | - |
 | hint | grey | "New route: Route 104. No encounter yet." | - |
 
-Deaths in your link groups are always shown (5i). Max 3 toasts visible, "+1 earlier notice" (platform 4g-2). A paused plugin shows the platform warning toast "FrameBeam - plugin paused" with "Restart plugin", "Details". Fullscreen behavior: README, E.
+Deaths in your link groups are always shown (5i). Max 3 toasts visible, "+1 earlier notice" (platform 4g-2). A paused plugin shows the platform warning toast "Uzume - plugin paused" with "Restart plugin", "Details". Fullscreen behavior: README, E.
 
 ## 5i Settings
 
