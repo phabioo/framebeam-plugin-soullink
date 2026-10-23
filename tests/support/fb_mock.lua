@@ -362,7 +362,7 @@ function M.new(opts)
     end,
     on_action = function(fn) ui.handler = fn end,
   }
-  -- fb.ui.open(slot): platform 0.11+ only; opts.no_ui_open leaves it out (older FrameBeam).
+  -- fb.ui.open(slot): platform 0.11+ only; opts.no_ui_open leaves it out (older Uzume).
   ui.opened = {}
   if not opts.no_ui_open then
     fb.ui.open = function(slot)
