@@ -35,30 +35,26 @@ local function rules_list(ctx)
   return { type = "list", id = "rules-list", rows = rows }
 end
 
+--- One eyebrow line "Deaths 7 · Routes 9 / 31 · Badges 4" (5e); the host run page already names the run, and
+--- the host draws the "Drawn by SoulLink" marker. A read-only run says so with a badge.
 local function header(ctx)
   local tr, view, run = ctx.tr, ctx.view, ctx.run
-  local players = {}
-  for i, p in ipairs(view.players) do
-    players[#players + 1] = { type = "row", id = "ph" .. i, gap = 8, align = "center", children = {
-      { type = "avatar", id = "ph-av" .. i, initial = common.initial(p.name), color = common.color(p, i), size = "m" },
-      { type = "text", id = "ph-t" .. i, text = p.name .. " · " .. common.place_label(p.place, tr, view), style = "body" },
-    } }
-  end
   local s = view.stats
+  local kids = { { type = "text", id = "head-summary", style = "eyebrow",
+    text = tr("run_summary", { deaths = s.deaths, done = s.routes_done, total = s.routes_total, badges = s.badges_max }) } }
+  if not common.writable(run) then
+    kids[#kids + 1] = { type = "badge", id = "head-status", text = tr("run_status_" .. tostring(run.status)) .. " · " .. common.mode_text(view, tr),
+      tone = "warning" }
+  end
+  return { type = "column", id = "head", gap = 8, children = kids }
+end
+
+--- Rules summary and "Game data" (diagnostics), below the tabs: out of the main flow, still one chip away.
+--- Game data stays closed until the player opens it with its chip.
+local function settings_foot(ctx)
+  local tr, view = ctx.tr, ctx.view
   local rules_open = ctx.ui.rules_open == true
   local kids = {
-    { type = "row", id = "head-row", gap = 8, align = "center", children = {
-      { type = "text", id = "head-name", text = run.name or "", style = "title" },
-      { type = "badge", id = "head-status", text = tr("run_status_" .. tostring(run.status)) .. " · " .. common.mode_text(view, tr),
-        tone = common.writable(run) and "info" or "warning" },
-    } },
-    { type = "column", id = "head-players", gap = 4, children = players },
-    { type = "grid", id = "head-stats", columns = 3, gap = 8, children = {
-      { type = "stat", id = "st-deaths", label = tr("stat_deaths"), value = tostring(s.deaths) },
-      { type = "stat", id = "st-routes", label = tr("stat_routes"), value = s.routes_done .. " / " .. s.routes_total },
-      { type = "stat", id = "st-badges", label = tr("stat_badges"), value = tostring(s.badges_max) },
-    } },
-    -- rules: collapsed to one summary line; the list opens in a short scroll area so it never pushes the page down
     { type = "row", id = "head-rules", gap = 8, align = "center", children = {
       { type = "text", id = "rules-summary", style = "meta",
         text = tr("rules_summary", { n = rules_on(view), total = #RULE_ORDER }) },
@@ -74,7 +70,7 @@ local function header(ctx)
     local blk = open and common.diag_block(ctx, "diag")
     if blk then kids[#kids + 1] = blk end
   end
-  return { type = "column", id = "head", gap = 8, children = kids }
+  return { type = "column", id = "foot", gap = 8, children = kids }
 end
 
 local function find_mine(ctx, route)
@@ -163,43 +159,96 @@ local function routes_page(ctx)
   return { type = "column", id = "page-routes", gap = 12, children = kids }
 end
 
+--- One team slot: creature image (when its icon is known), "nickname · Lv n", HP bar and, for the own team,
+--- the correction buttons.
+local function team_cell(ctx, p, i, j, m)
+  local tr = ctx.tr
+  local c = {}
+  local icon = common.icon_block(ctx, "tm-i" .. i .. "-" .. j, m, common.color(p, i), "m")
+  if icon then c[#c + 1] = icon end
+  local title = (m.dead and "✕ " or "") .. common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
+  c[#c + 1] = { type = "text", id = "tm" .. i .. "-" .. j, text = title, style = "body" }
+  local ratio = (not m.dead) and common.hp_ratio(m)
+  if ratio then c[#c + 1] = { type = "bar", id = "tm-hp" .. i .. "-" .. j, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) } end
+  if p.id == ctx.me and not ctx.readonly then
+    c[#c + 1] = { type = "column", id = "tm-a" .. j, gap = 4, align = "start", children = {
+      { type = "button", id = "tm-g" .. j, label = tr("change_group"), action = "group_open", value = m.id, variant = "quiet" },
+      { type = "button", id = "tm-gift" .. j, label = tr("mark_gift"), action = "gift_open", value = m.id, variant = "quiet" },
+      (not m.dead) and { type = "button", id = "tm-d" .. j, label = tr("mark_dead"), action = "dead_open", value = m.id, variant = "quiet" } or nil,
+    } }
+  end
+  return { type = "column", id = "tmc" .. i .. "-" .. j, gap = 4, children = c }
+end
+
+--- Box: a row of small images with the count in the eyebrow; a list with names while an icon is missing.
+local function box_block(ctx, p, i)
+  local tr = ctx.tr
+  local mons = {}
+  for _, id in ipairs(p.ids) do
+    local m = p.mons[id]
+    if m.where == "box" then mons[#mons + 1] = m end
+  end
+  local kids = { { type = "text", id = "box-count" .. i, text = tr("box_count", { n = p.box_count }), style = "eyebrow" } }
+  local icons, all = {}, true
+  for k, m in ipairs(mons) do
+    local ic = common.icon_block(ctx, "box-i" .. i .. "-" .. k, m, common.color(p, i), "s")
+    if ic then icons[#icons + 1] = ic else all = false end
+  end
+  if #mons > 0 and all then
+    kids[#kids + 1] = { type = "grid", id = "box-grid" .. i, columns = 6, gap = 8, children = icons }
+  elseif #mons > 0 then
+    local rows = {}
+    for _, m in ipairs(mons) do
+      rows[#rows + 1] = { id = "b" .. m.id, title = (m.dead and "✕ " or "") .. common.mon_name(m), image = common.icon(ctx, m.species, m.form),
+        sub = m.route and common.route_label(ctx, m.route) or nil, tone = m.dead and "neutral" or nil }
+    end
+    kids[#kids + 1] = { type = "list", id = "box-list" .. i, rows = rows }
+  end
+  return kids
+end
+
+--- Per person: avatar, name and current route, then TEAM (grid of slots) and BOX (5e-3).
 local function team_page(ctx)
   local tr, view = ctx.tr, ctx.view
   local secs = {}
   for i, p in ipairs(view.players) do
-    local kids = {}
-    for j, m in ipairs(p.team) do
-      local title = (m.dead and "✕ " or "") .. common.mon_name(m) .. (m.level and (" · " .. tr("level_short", { n = m.level })) or "")
-      local head = { type = "text", id = "tm" .. i .. "-" .. j, text = title, style = "body" }
-      local icon = common.icon_block(ctx, "tm-i" .. i .. "-" .. j, m, common.color(p, i), "s")
-      if icon then head = { type = "row", id = "tm-h" .. i .. "-" .. j, gap = 8, align = "center", children = { icon, head } } end
-      local c = { head }
-      local ratio = (not m.dead) and common.hp_ratio(m)
-      if ratio then c[#c + 1] = { type = "bar", id = "tm-hp" .. i .. "-" .. j, value = ratio, label = tr("hp_label", { hp = m.hp, max = m.mhp }) } end
-      if p.id == ctx.me and not ctx.readonly then
-        c[#c + 1] = { type = "row", id = "tm-a" .. j, gap = 8, children = {
-          { type = "button", id = "tm-g" .. j, label = tr("change_group"), action = "group_open", value = m.id, variant = "quiet" },
-          { type = "button", id = "tm-gift" .. j, label = tr("mark_gift"), action = "gift_open", value = m.id, variant = "quiet" },
-          (not m.dead) and { type = "button", id = "tm-d" .. j, label = tr("mark_dead"), action = "dead_open", value = m.id, variant = "quiet" } or nil,
-        } }
-      end
-      kids[#kids + 1] = { type = "column", id = "tmc" .. i .. "-" .. j, gap = 4, children = c }
+    local kids = {
+      { type = "row", id = "pl-head" .. i, gap = 8, align = "center", children = {
+        { type = "avatar", id = "pl-av" .. i, initial = common.initial(p.name), color = common.color(p, i), size = "m" },
+        { type = "column", id = "pl-who" .. i, gap = 0, children = {
+          { type = "text", id = "pl-name" .. i, text = p.name, style = "heading" },
+          { type = "text", id = "pl-place" .. i, text = common.place_label(p.place, tr, view), style = "eyebrow" } } },
+      } },
+      { type = "text", id = "team-label" .. i, text = tr("team_label"), style = "eyebrow" },
+    }
+    local cells = {}
+    for j, m in ipairs(p.team) do cells[#cells + 1] = team_cell(ctx, p, i, j, m) end
+    if #cells == 0 then
+      kids[#kids + 1] = { type = "text", id = "tm-empty" .. i, text = tr("team_empty"), style = "meta" }
+    else
+      local own = p.id == ctx.me and not ctx.readonly
+      kids[#kids + 1] = { type = "grid", id = "team-grid" .. i, columns = own and 3 or 6, gap = 12, children = cells }
     end
-    if #p.team == 0 then kids[1] = { type = "text", id = "tm-empty" .. i, text = tr("team_empty"), style = "meta" } end
-    local rows = {}
-    for _, id in ipairs(p.ids) do
-      local m = p.mons[id]
-      if m.where == "box" then
-        rows[#rows + 1] = { id = "b" .. id, title = (m.dead and "✕ " or "") .. common.mon_name(m), image = common.icon(ctx, m.species, m.form),
-          sub = m.route and common.route_label(ctx, m.route) or nil, tone = m.dead and "neutral" or nil }
-      end
-    end
-    kids[#kids + 1] = { type = "text", id = "box-count" .. i, text = tr("box_count", { n = p.box_count }), style = "eyebrow" }
-    if #rows > 0 then kids[#kids + 1] = { type = "list", id = "box-list" .. i, rows = rows } end
-    secs[#secs + 1] = { type = "section", id = "pl" .. i, title = tr("team_player", { player = p.name, place = common.place_label(p.place, tr, view) }),
-      children = kids }
+    for _, b in ipairs(box_block(ctx, p, i)) do kids[#kids + 1] = b end
+    secs[#secs + 1] = { type = "column", id = "pl" .. i, gap = 8, children = kids }
   end
-  return { type = "column", id = "page-team", gap = 12, children = secs }
+  return { type = "column", id = "page-team", gap = 20, children = secs }
+end
+
+--- Deaths of one link group sit together (they share the time), other deaths stand alone. Every cluster is a
+--- list of rows: image, "nickname", "species · Lv · owner · route · cause", time; "Undo…" for a link group.
+local function grave_clusters(view)
+  local clusters, by_group = {}, {}
+  for _, g in ipairs(view.graveyard) do
+    local c = g.group and by_group[g.group]
+    if not c then
+      c = { group = g.group, number = g.group_number, items = {} }
+      clusters[#clusters + 1] = c
+      if g.group then by_group[g.group] = c end
+    end
+    c.items[#c.items + 1] = g
+  end
+  return clusters
 end
 
 local function graveyard_page(ctx)
@@ -207,19 +256,38 @@ local function graveyard_page(ctx)
   if #view.graveyard == 0 then
     return { type = "column", id = "page-grave", gap = 12, children = { { type = "text", id = "grave-empty", text = tr("grave_empty"), style = "meta" } } }
   end
-  local rows = {}
-  for i, g in ipairs(view.graveyard) do
-    local cause = g.doa and tr("cause_doa") or tr("cause_" .. tostring(g.cause))
-    local parts = { common.name_of(view, g.owner), g.route and common.route_label(ctx, g.route) or "—", cause }
-    if g.group_number then parts[#parts + 1] = tr("group_n", { n = g.group_number }) end
-    rows[#rows + 1] = { id = "g" .. i, title = "✕ " .. common.mon_name(g), sub = table.concat(parts, " · "),
-      image = common.icon(ctx, g.species, g.form), tone = "neutral",
-      action = g.group and "undo_open" or nil, value = g.group }
+  local kids = {}
+  local n = 0
+  for ci, c in ipairs(grave_clusters(view)) do
+    local rows, when = {}, nil
+    for _, g in ipairs(c.items) do
+      n = n + 1
+      local ev = common.event_by_seq(ctx, g.seq)
+      local at = ev and common.when(tr, ev.time)
+      when = when or at
+      local cause = g.doa and tr("cause_doa") or tr("cause_" .. tostring(g.cause))
+      local mon = { common.species_label(g) .. (g.level and (" · " .. tr("level_short", { n = g.level })) or ""),
+        common.name_of(view, g.owner), g.route and common.route_label(ctx, g.route) or "—", cause }
+      rows[#rows + 1] = { id = "g" .. n, title = "✕ " .. common.mon_name(g), sub = table.concat(mon, " · "), meta = at,
+        image = common.icon(ctx, g.species, g.form), tone = "neutral",
+        action = g.group and "undo_open" or nil, value = g.group }
+    end
+    local head = {}
+    if c.group and (c.number or #c.items > 1) then
+      head[#head + 1] = { type = "text", id = "grave-h" .. ci, style = "eyebrow",
+        text = c.number and tr("grave_group", { n = c.number, count = #c.items }) or tr("grave_group_nonum", { count = #c.items }) }
+    end
+    if c.group and not ctx.readonly then
+      head[#head + 1] = { type = "button", id = "grave-undo" .. ci, label = tr("undo_ellipsis"), action = "undo_open",
+        value = c.group, variant = "quiet" }
+    end
+    local col = {}
+    if #head > 0 then col[#col + 1] = { type = "row", id = "grave-hr" .. ci, gap = 8, align = "center", children = head } end
+    col[#col + 1] = { type = "list", id = "grave-list" .. (ci == 1 and "" or ci), rows = rows }
+    kids[#kids + 1] = { type = "column", id = "grave-c" .. ci, gap = 4, children = col }
   end
-  return { type = "column", id = "page-grave", gap = 12, children = {
-    { type = "list", id = "grave-list", rows = rows },
-    { type = "text", id = "grave-hint", text = tr("grave_hint"), style = "meta" },
-  } }
+  kids[#kids + 1] = { type = "text", id = "grave-hint", text = tr("grave_hint"), style = "meta" }
+  return { type = "column", id = "page-grave", gap = 12, children = kids }
 end
 
 local function event_text(ctx, ev)
@@ -234,25 +302,36 @@ end
 local function log_page(ctx)
   local tr, view = ctx.tr, ctx.view
   local filter = ctx.ui.log_filter or "all"
-  local rows = {}
+  local person = ctx.ui.log_person
+  if person ~= nil and not common.player(view, person) then person = nil end
+  local rows, manual = {}, 0
   local evs = ctx.events or {}
   for i = #evs, 1, -1 do
     local ev = evs[i]
-    if ev.source ~= "hub" and (filter == "all" or ev.source == filter) and #rows < M.LOG_LIMIT then
-      rows[#rows + 1] = {
-        id = "e" .. ev.seq, title = event_text(ctx, ev),
-        sub = tr("log_sub", { player = common.name_of(view, ev.user_id), source = tr("source_" .. tostring(ev.source)) }),
-        meta = "#" .. ev.seq, tone = ev.source == "manual" and "warning" or nil,
-        action = (ev.type == "soullink.correction" and not ctx.readonly) and "revert_open" or nil,
-        value = ev.seq,
-      }
+    if ev.source ~= "hub" then
+      if ev.source == "manual" then manual = manual + 1 end
+      if (filter == "all" or ev.source == filter) and (person == nil or ev.user_id == person) and #rows < M.LOG_LIMIT then
+        rows[#rows + 1] = {
+          id = "e" .. ev.seq, title = event_text(ctx, ev),
+          sub = tr("log_sub", { player = common.name_of(view, ev.user_id), source = tr("source_" .. tostring(ev.source)) }),
+          meta = common.when(tr, ev.time) or ("#" .. ev.seq), tone = ev.source == "manual" and "warning" or nil,
+          action = (ev.type == "soullink.correction" and not ctx.readonly) and "revert_open" or nil,
+          value = ev.seq,
+        }
+      end
     end
   end
-  local kids = { { type = "row", id = "lf", gap = 8, children = {
+  local bar = {
     { type = "chip", id = "lf-all", text = tr("log_all"), action = "lf:all", selected = filter == "all" },
     { type = "chip", id = "lf-auto", text = tr("log_automatic"), action = "lf:automatic", selected = filter == "automatic" },
-    { type = "chip", id = "lf-manual", text = tr("log_manual"), action = "lf:manual", selected = filter == "manual" },
-  } } }
+    { type = "chip", id = "lf-manual", text = tr("log_manual", { n = manual }), action = "lf:manual", selected = filter == "manual" },
+  }
+  if #view.players > 1 then
+    local opts = { { value = "all", label = tr("log_everyone") } }
+    for _, p in ipairs(view.players) do opts[#opts + 1] = { value = p.id, label = p.name } end
+    bar[#bar + 1] = { type = "select", id = "lf-person", options = opts, selected = person or "all", action = "log_person" }
+  end
+  local kids = { { type = "row", id = "lf", gap = 8, align = "center", children = bar } }
   if #rows > 0 then kids[#kids + 1] = { type = "list", id = "log-list", rows = rows }
   else kids[#kids + 1] = { type = "text", id = "log-empty", text = tr("log_empty"), style = "meta" } end
   return { type = "column", id = "page-log", gap = 12, children = kids }
@@ -399,6 +478,23 @@ local function files_section(ctx, m)
   return { type = "section", id = "mapfiles", title = tr("map_src_files"), children = kids }
 end
 
+--- Rows of the route card above the selected map point: one per person with the state on that route (5e-1).
+local function route_popover(ctx, key)
+  local view = ctx.view
+  local row = common.row_of(view, key)
+  if not row then return nil end
+  local rows = {}
+  for i, p in ipairs(view.players) do
+    if #rows >= 16 then break end
+    local cell = row.cells[p.id] or { state = "open" }
+    local line = { owner = common.color(p, i), name = p.name, status = common.cell_text(cell, ctx.tr) }
+    local src = cell.species and common.icon(ctx, cell.species, cell.form)
+    if src then line.src = src end
+    rows[#rows + 1] = line
+  end
+  return #rows > 0 and rows or nil
+end
+
 local function map_page(ctx)
   local view, m, tr = ctx.view, ctx.map, ctx.tr
   local src, screen_ok, files_ok = map_source(ctx, m)
@@ -457,7 +553,11 @@ local function map_page(ctx)
   end
   local map = { type = "map", id = "map", players = players, routes = routes, filter = ctx.ui.map_filter or "all",
     me = ctx.me, legend = true, action = "map_select", image = m.src, image_w = m.w, image_h = m.h }
-  if ctx.ui.selected_route then map.selected = ctx.ui.selected_route end
+  if ctx.ui.selected_route then
+    map.selected = ctx.ui.selected_route
+    local pop = route_popover(ctx, ctx.ui.selected_route)
+    if pop then map.popover = pop end
+  end
   local acts = { { type = "button", id = "map-calib", label = tr("calib_open"), action = "calib_toggle",
     variant = calib and "primary" or "quiet" } }
   if screen_ok then
@@ -467,7 +567,8 @@ local function map_page(ctx)
   end
   acts[#acts + 1] = { type = "button", id = "map-remove", label = tr("map_remove"), action = "map_remove", variant = "quiet",
     confirm = { title = tr("map_remove_title"), text = tr("map_remove_text"), confirm_label = tr("map_remove") } }
-  local kids = { map, { type = "row", id = "map-acts", gap = 8, children = acts } }
+  local kids = { { type = "text", id = "map-source", text = tr(src == "files" and "map_from_files" or "map_from_screen"), style = "eyebrow" },
+    map, { type = "row", id = "map-acts", gap = 8, children = acts } }
   kids[#kids + 1] = switch
   if src == "files" then
     kids[#kids + 1] = files_section(ctx, m)
@@ -496,9 +597,8 @@ function M.build(ctx)
   local tr, view = ctx.tr, ctx.view
   local ids = M.tab_ids(ctx)
   local labels, pages = {}, {}
-  local counts = { routes = #view.rows, grave = #view.graveyard, log = #(ctx.events or {}) }
   for i, id in ipairs(ids) do
-    labels[i] = tr("tab_" .. id, { n = counts[id] or 0 })
+    labels[i] = tr("tab_" .. id)
     local builders = { map = map_page, routes = routes_page, team = team_page, grave = graveyard_page, log = log_page }
     pages[i] = builders[id](ctx)
   end
@@ -511,6 +611,7 @@ function M.build(ctx)
   local corr = corr_ui.section(ctx)
   if corr then kids[#kids + 1] = corr end
   kids[#kids + 1] = { type = "tabs", id = "tabs", tabs = labels, selected = sel, action = "tab", children = pages }
+  kids[#kids + 1] = settings_foot(ctx)
   return { type = "column", id = "screen", gap = 16, children = kids }
 end
 

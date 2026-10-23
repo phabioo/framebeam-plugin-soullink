@@ -26,6 +26,9 @@ M.COORDS = {}
 --- VERIFY LOCALLY against the real game before relying on it; hints only, never blocking.
 M.LEVEL_CAPS = { [0] = 15, 19, 24, 29, 31, 33, 42, 43 }
 
+--- Number of gym badges of the game (the level cap table has one entry per badge).
+M.BADGES = 8
+
 --- Level cap hint for `badges` badges, or nil when unknown (for example all eight badges).
 function M.level_cap(badges)
   if math.type(badges) ~= "integer" then return nil end

@@ -105,7 +105,8 @@ t.case("catch: state, event and panel", function()
   local panel = e.m.ui.trees.panel
   t.eq(ui_validator.find(panel, "loc").title, "Route 101")
   t.eq(ui_validator.find(panel, "loc").status, "caught")
-  t.ok(find_text(e.m.ui.trees.hud, "caught"))
+  t.eq(ui_validator.find(e.m.ui.trees.hud, "hud-status").text, "Caught")
+  t.eq(ui_validator.find(e.m.ui.trees.hud, "hud-status").tone, "ok")
   -- state is only written when it changed
   local n = e.m.run.events and #e.m.run.events
   e.step(); e.step()
@@ -122,7 +123,7 @@ t.case("state changed only: setState count", function()
   e.act("badges_select", 3)
   t.eq(writes, 1)
   t.eq(e.m.run.states["u-lena"].badges, 3)
-  t.eq(ui_validator.find(e.m.ui.trees.panel, "badges").text, "Badges 3 / 8 · Next cap Lv 29")
+  t.eq(ui_validator.find(e.m.ui.trees.panel, "badges").text, "Graveyard 0 · Badges 3 / 8 · next cap Lv 29")
 end)
 
 t.case("remote death in a linked group: notice, HUD, view", function()
@@ -173,7 +174,7 @@ t.case("correction actions post manual events", function()
   local e = boot()
   e.act("place_select", "route-101")
   e.act("missed_open", "route-105")
-  t.eq(ui_validator.find(e.m.ui.trees.screen, "corr").title, "Mark route as missed?")
+  t.eq(ui_validator.find(e.m.ui.trees.screen, "corr").title, "Mark Route 105 as missed for you?")
   e.act("corr_submit")
   local c = events_of(e.m, "soullink.correction")[1]
   t.eq(c.payload, { kind = "mark_missed", user = "u-lena", route = "route-105" })
@@ -373,7 +374,7 @@ t.case("i18n: every static key used in the sources exists in en and de", functio
     run_readonly_ = { "paused", "finished", "abandoned" },
     cause_ = { "own", "linked", "nil", "doa" },
     source_ = { "automatic", "manual", "hub" },
-    mode_ = { "nuzlocke", "soullink" }, panel_eyebrow_ = { "nuzlocke", "soullink" },
+    mode_ = { "nuzlocke", "soullink" },
     tab_ = { "map", "routes", "team", "grave", "log" },
     log_type_ = { "soullink_catch", "soullink_death", "soullink_encounter", "soullink_place", "soullink_correction" },
     loc_ = { "open", "encounter", "caught", "missed", "no_route", "unknown" },
@@ -418,7 +419,7 @@ t.case("package builds and verifies", function()
   local ok = os.execute("python3 -c 'import sys' >/dev/null 2>&1")
   if not ok then return t.skip("python3 not available") end
   local dir = os.tmpname() .. ".d"
-  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.7.1 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/uzume.soullink-0.7.1.fbplugin >/dev/null")
+  local ok2 = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v0.8.0 >/dev/null && python3 -I tools/package.py --verify " .. dir .. "/uzume.soullink-0.8.0.fbplugin >/dev/null")
   t.ok(ok2, "package.py failed")
   local bad = os.execute("python3 -I tools/package.py --out " .. dir .. " --tag v9.9.9 >/dev/null 2>&1")
   t.ok(not bad, "tag/version mismatch must fail")

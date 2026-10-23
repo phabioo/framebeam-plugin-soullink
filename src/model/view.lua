@@ -410,7 +410,7 @@ function V.view(run, states, events, cfg)
         dead = dead + 1
         graveyard[#graveyard + 1] = {
           owner = pl.id, mon = id, species = mv.species, species_name = mv.species_name, form = mv.form,
-          nickname = mv.nickname,
+          nickname = mv.nickname, level = mv.level,
           route = mv.route, group = mv.group, group_number = mv.group_number, cause = mv.cause,
           doa = mv.doa, deaths = mv.deaths, shiny = mv.shiny,
           seq = mv.cause == "own" and (death_seq[mkey(pl.id, id)] or {})[mv.deaths]

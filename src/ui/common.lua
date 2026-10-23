@@ -260,7 +260,7 @@ local LOC_STATUS = { open = "open", encounter = "encounter", caught = "caught", 
 --- Status for the `location` block.
 function C.loc_status(status) return LOC_STATUS[status] or "none" end
 
-local TONE = { open = "info", encounter = "info", caught = "ok", missed = "neutral" }
+local TONE = { open = "neutral", encounter = "info", caught = "ok", missed = "neutral" }
 function C.status_tone(status) return TONE[status] or "neutral" end
 
 --- Short text of a cell of the routes matrix.
@@ -294,6 +294,25 @@ end
 
 function C.empty(tr, title_key, text_key)
   return { type = "empty", id = "empty", title = tr(title_key), text = tr(text_key) }
+end
+
+--- Default keys of the hotkeys the manifest declares (ui.hotkeys); the UI shows a hint only for these ids.
+--- The key is a suggestion the player can change in Controllers, so hints say "default" in the docs only.
+C.HOTKEYS = { ["toggle-hud"] = "Ctrl+H", ["doesnt-count"] = "Ctrl+D", ["open-run"] = "Ctrl+R" }
+
+--- "YYYY-MM-DDTHH:MM..." (event time, UTC) as translated "MM-DD HH:MM UTC" text, or nil when unknown.
+function C.when(tr, t)
+  if type(t) ~= "string" then return nil end
+  local y, mo, d, h, mi = t:match("^(%d%d%d%d)-(%d%d)-(%d%d)[T ](%d%d):(%d%d)")
+  if not y then return nil end
+  return tr("when_utc", { m = mo, d = d, time = h .. ":" .. mi })
+end
+
+--- Event of the context's event list by sequence number, or nil.
+function C.event_by_seq(ctx, seq)
+  if seq == nil then return nil end
+  for _, ev in ipairs(ctx.events or {}) do if ev.seq == seq then return ev end end
+  return nil
 end
 
 function C.mode_text(view, tr) return tr("mode_" .. view.mode) end

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: v0.7.1 (Uzume wording in texts and comments); v0.7.0 (new plugin ids uzume.soullink and uzume.soullink-core; the screen slot is the run tab of the Uzume app; v0.6.2: map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on Uzume plugin API v1 (0.11); see https://github.com/phabioo/uzume `docs/roadmap.md`.
+Status: v0.8.0 (Uzume design boards 5b, 5e, 5f: panel, HUD, run tab and corrections follow the boards as far as the fb.ui blocks allow); v0.7.1 (Uzume wording in texts and comments); v0.7.0 (new plugin ids uzume.soullink and uzume.soullink-core; the screen slot is the run tab of the Uzume app; v0.6.2: map from the game files or the game picture, full-screen default crop, Game data block with every key; place picker with every place, compact panel, run screen opened from the game, detection from pokemon-core 0.3.1). Depends on Uzume plugin API v1 (0.11); see https://github.com/phabioo/uzume `docs/roadmap.md`.
 
 ## v0.1 MVP on Omega Ruby / Alpha Sapphire
 
@@ -34,6 +34,14 @@ Status: v0.7.1 (Uzume wording in texts and comments); v0.7.0 (new plugin ids uzu
 ## v0.6.1 Game data closed by default
 
 - The "Game data" block is closed by default again; the chip "Show game data" opens it and the choice is kept across refreshes. Grouping by key prefix and the no-cap behaviour are unchanged.
+## v0.8.0 Uzume design boards
+
+- Panel (5b-1): no own eyebrow (the app draws "Drawn by SoulLink"), one "Open run" in the header, encounter card with "first on this route" and "Doesn't count" plus the default key hint (Ctrl+D, only the keys the manifest declares), "Linked with" over the partners, footer "Graveyard n · Badges n / 8 · next cap Lv n".
+- HUD (5b-2): "SL · <place>" and a toned status badge (No encounter yet, Encounter now, Caught, Missed, Not a route); no own badge or dot.
+- Run tab (5e): summary eyebrow "Deaths n · Routes a / b · Badges n" instead of name, players and stat cards; rules and Game data moved below the tabs (Game data still closed behind its chip); plain tab names; map eyebrow naming the source and the route card (`popover`: people and state); Routes chips "All · n / Open · n / Complete · n"; Team & box with avatar, current route, team grid and box images; Graveyard grouped by link group with time and "Undo…"; Event log with "Manual · n", a people select and the time (UTC) instead of #seq.
+- Corrections (5f-1): board titles and bodies, action button before Cancel, a "who sees it" line.
+- Skipped, needs app features or data the plugin does not have: game version name in the Team & box eyebrow, region name in the map eyebrow, creature images inside table cells (Routes), Export, the event source column ("Lena's app"), zoom buttons and D-pad hints (drawn by the map block), species `Select` in "Add by hand", exact "today 22:41" times (event time is UTC, no wall clock in the sandbox).
+
 ## v0.7.1 Uzume wording
 
 - Texts and comments say "the app" and "the server" instead of the old product names Player and Hub (ADR 0030 D1). Changed strings: `source_hub` (en "hub" -> "server", de "Hub" -> "Server"), `map_err_unsupported` and `map_err_denied` (en "Player" -> "app", de "Player" -> "App"). No key renamed, `{player}` placeholders unchanged, the event source value `hub` in run data unchanged.
