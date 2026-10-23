@@ -570,7 +570,7 @@ t.case("names: catch, encounter and place store display names; other players see
   e.step(); e.full()
   t.eq(util.json_size(e.state().names), before)
   t.ok(before < 400)
-  -- Jonas (another Player) shows names from Lena's state with no core involved
+  -- Jonas (another app) shows names from Lena's state with no core involved
   local run = B.run({ "Lena", "Jonas" })
   run.me = "u-jonas"
   local states = { ["u-lena"] = e.state(), ["u-jonas"] = { v = 1 } }

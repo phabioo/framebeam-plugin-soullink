@@ -1,6 +1,6 @@
 # Architecture
 
-Status: v0.7.0 (plugin id uzume.soullink; v0.6.2: corrections shape detection, icon check; map from the game files or the game picture, full-screen default crop, "Game data" block with every key; place picker with every place, compact panel, run screen in the screen slot, detection from pokemon-core 0.3 / 0.3.1). Everything below is design against plugin API v1 as documented in `docs/guides/plugin-api.md` of the Uzume repository; open API items are listed at the end.
+Status: v0.7.1 (Uzume wording in texts and comments); v0.7.0 (plugin id uzume.soullink; v0.6.2: corrections shape detection, icon check; map from the game files or the game picture, full-screen default crop, "Game data" block with every key; place picker with every place, compact panel, run screen in the screen slot, detection from pokemon-core 0.3 / 0.3.1). Everything below is design against plugin API v1 as documented in `docs/guides/plugin-api.md` of the Uzume repository; open API items are listed at the end.
 
 ## Layout
 
@@ -24,7 +24,7 @@ The model is pure: it never reads `fb` (only `snapshot.from_core(fb)` calls `fb.
 pokemon.core --snapshot.from_core--> snapshot --detect.diff(prev own state, cfg)--> new own state + facts
 own state  -> fb.run.setState        facts -> events.from_facts -> fb.run.event (automatic)
 user action -> corrections.<kind> -> fb.run.event (manual)
-view.view(fb.run.current(), fb.run.states(), fb.run.events(...), cfg) -> UI / Hub board
+view.view(fb.run.current(), fb.run.states(), fb.run.events(...), cfg) -> UI / run board
 ```
 
 ## Modules
@@ -151,7 +151,7 @@ All strings come from `plugin/i18n/en.json` (source) and `de.json`; only tones, 
 - Corrections (5f): inline section; fields change with the actions `cf:<field>` (text fields commit on Enter), `corr_submit` validates with `corrections.validate_spec` and posts a manual `soullink.correction` event (text from i18n), `corr_cancel` closes. Danger/confirm dialogs on the buttons for undo death, mark dead, mark missed and revert. Forms: doesn't count (reason segments), undo death (reason field), set group, add by hand (species number, nickname, level, state), mark missed, mark dead, gift, revert.
 - Board (5gh): `board.build`.
 - Run start rules (5a-4): the manifest field `run_settings` declares `mode` (enum `nuzlocke`|`soullink`, default `soullink`) and one boolean `rules.<flag>` per flag of `model.rules` with the same defaults; the Start dialog sends them as `settings["uzume.soullink"] = { mode, rules = {...} }`, `rules.parse` reads them (the two-or-more-players mode fallback only applies to runs without settings). Labels and hints are the i18n keys `rs_*` (`rs_mode`, `rs_<flag>`, `rs_<flag>_hint`, `rs_mode_<value>`). `tests/test_platform.lua` checks the manifest against the validator rules and that its keys map exactly onto `rules.parse`.
-- Out of scope: Hub run wizard steps other than the platform's rules section (5ah), stream view (5gs) and plugin settings (5i): the platform has no settings schema yet.
+- Out of scope: run wizard steps other than the platform's rules section (5ah), stream view (5gs) and plugin settings (5i): the platform has no settings schema yet.
 
 Tests: `tests/test_app.lua` drives the controller with the fake `fb.run`, `fb.ui` and `pokemon.core`; `tests/support/ui_validator.lua` checks every tree and patch against the documented block catalog (types, props, enums, ids, limits).
 

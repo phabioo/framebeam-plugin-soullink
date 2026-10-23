@@ -1,6 +1,6 @@
 -- Region map, two sources. (1) From the game picture: the player opens the map in the game on the 3DS
 -- bottom screen and "Take map from screen" captures it with fb.video.capture (permission video.capture,
--- Player 0.11+ with the game picture API). (2) From the game files: pokemon-core `map_candidates()` lists
+-- Uzume 0.11+ with the game picture API). (2) From the game files: pokemon-core `map_candidates()` lists
 -- large images found in the player's own RomFS (nil, "not_ready" while it still scans), `map_image(id)` returns
 -- one as PNG, `map_selected()` is the core's own pick; the player browses them and confirms one. The PNG stays
 -- in the own cache of this player (never in the run state):
@@ -16,7 +16,7 @@
 -- source, RESCALES the recorded positions (screen fraction kept) instead of clearing them; without a known old
 -- image nothing changes. The default crop is the full screen.
 -- Route positions on the image are our own recorded facts (data.oras.COORDS[game id]) merged under the
--- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older Player) the
+-- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older app) the
 -- Map tab says so; nothing else depends on it.
 local util = require("model.util")
 local oras = require("data.oras")

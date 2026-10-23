@@ -269,7 +269,7 @@ t.case("map: screens fall back to main, errors are shown per code", function()
   t.ok(ui_validator.find(e3.m.ui.trees.screen, "map-error"))
 end)
 
-t.case("map: an older Player without fb.video says so and nothing else breaks", function()
+t.case("map: an older app without fb.video says so and nothing else breaks", function()
   local e = boot(nil, { no_video = true })
   e.step(); e.step()
   local p = e.m.ui.trees.screen
