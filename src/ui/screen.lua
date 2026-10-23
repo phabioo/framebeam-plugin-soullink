@@ -343,7 +343,7 @@ local function capture_block(ctx, m, retake)
 end
 
 --- Which source the Map tab shows: "screen" (take from the game picture) or "files" (candidates of the game
---- files). The player's choice, else the source of the stored map; only sources this Player/core offers.
+--- files). The player's choice, else the source of the stored map; only sources this app/core offers.
 local function map_source(ctx, m)
   local screen_ok = m.api and m.live
   local files_ok = m.live and m.files and m.files.avail
@@ -404,7 +404,7 @@ local function map_page(ctx)
   local src, screen_ok, files_ok = map_source(ctx, m)
   local switch = source_row(ctx, src, screen_ok, files_ok)
   if m.state ~= "ready" then
-    -- no image yet: empty state (5e), then the chosen source; older Player and no files: update hint
+    -- no image yet: empty state (5e), then the chosen source; older app and no files: update hint
     if not screen_ok and not files_ok then
       return { type = "column", id = "page-map", gap = 12, children = {
         { type = "empty", id = "map-empty", title = tr("map_title"), text = tr(m.api and "map_empty_text" or "map_no_api") } } }

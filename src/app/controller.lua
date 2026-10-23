@@ -83,7 +83,7 @@ function A:game_name(kind, id)
   if not ok or why == "unsupported" then self.name_unsupported = true; return nil end
   if type(v) == "string" and v ~= "" then
     self.gnames[kind][id] = v
-    -- remembered in the run state: other players and the Hub show the name without a running game
+    -- remembered in the run state: other players and the server show the name without a running game
     if self.st then state.note_name(self.st, kind == "species" and "sp" or "loc", id, v) end
     return v
   end

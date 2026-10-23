@@ -101,7 +101,7 @@ function A:game_name(kind, id)
   if not ok or why == "unsupported" then self.name_unsupported = true; return nil end
   if type(v) == "string" and v ~= "" then
     self.gnames[kind][id] = v
-    -- remembered in the run state: other players and the Hub show the name without a running game
+    -- remembered in the run state: other players and the server show the name without a running game
     if self.st then state.note_name(self.st, kind == "species" and "sp" or "loc", id, v) end
     return v
   end
@@ -1018,7 +1018,7 @@ end
 __mod["app.maps"] = function(...)
 -- Region map, two sources. (1) From the game picture: the player opens the map in the game on the 3DS
 -- bottom screen and "Take map from screen" captures it with fb.video.capture (permission video.capture,
--- Player 0.11+ with the game picture API). (2) From the game files: pokemon-core `map_candidates()` lists
+-- Uzume 0.11+ with the game picture API). (2) From the game files: pokemon-core `map_candidates()` lists
 -- large images found in the player's own RomFS (nil, "not_ready" while it still scans), `map_image(id)` returns
 -- one as PNG, `map_selected()` is the core's own pick; the player browses them and confirms one. The PNG stays
 -- in the own cache of this player (never in the run state):
@@ -1034,7 +1034,7 @@ __mod["app.maps"] = function(...)
 -- source, RESCALES the recorded positions (screen fraction kept) instead of clearing them; without a known old
 -- image nothing changes. The default crop is the full screen.
 -- Route positions on the image are our own recorded facts (data.oras.COORDS[game id]) merged under the
--- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older Player) the
+-- recorded ones. Retaking or removing the map keeps the positions. Without fb.video (older app) the
 -- Map tab says so; nothing else depends on it.
 local util = require("model.util")
 local oras = require("data.oras")
@@ -1575,7 +1575,7 @@ return M
 
 end
 __mod["main"] = function(...)
--- Entry module of the SoulLink & Nuzlocke plugin: wires the run model to the Player.
+-- Entry module of the SoulLink & Nuzlocke plugin: wires the run model to the app.
 local controller = require("app.controller")
 
 fb.log.info(fb.i18n.t("loaded", { version = (fb.plugin and fb.plugin.version) or "?" }))
@@ -2619,7 +2619,7 @@ S.MAX_PLACES = 600
 ---   badges = number
 ---   names  = { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } }   display names read from
 ---            the game when a catch / encounter / place was recorded (short, one entry per id), so other
----            players and the Hub show names without a running game
+---            players and the server show names without a running game
 ---   areas  = { <location id>, ... }   encounter areas in game order (pokemon-core areas()), for ordering
 ---   places = { <location id>, ... }   every place of the game in game order (pokemon-core locations(), else
 ---            the areas), for the place select; areas is the subset with encounter slots
@@ -2641,7 +2641,7 @@ function S.new(game)
   })
 end
 
---- Complete a state received from the Hub (nil or older shape) so the model can use it.
+--- Complete a state received from the server (nil or older shape) so the model can use it.
 function S.ensure(st)
   if type(st) ~= "table" then return S.new() end
   st.v = st.v or S.VERSION
@@ -3393,7 +3393,7 @@ return V
 
 end
 __mod["ui.board"] = function(...)
--- Hub run board (design 5gh): compact read-only tree for fb.run.setBoard.
+-- Run board (design 5gh): compact read-only tree for fb.run.setBoard.
 local common = require("ui.common")
 
 local M = {}
@@ -4513,7 +4513,7 @@ local function capture_block(ctx, m, retake)
 end
 
 --- Which source the Map tab shows: "screen" (take from the game picture) or "files" (candidates of the game
---- files). The player's choice, else the source of the stored map; only sources this Player/core offers.
+--- files). The player's choice, else the source of the stored map; only sources this app/core offers.
 local function map_source(ctx, m)
   local screen_ok = m.api and m.live
   local files_ok = m.live and m.files and m.files.avail
@@ -4574,7 +4574,7 @@ local function map_page(ctx)
   local src, screen_ok, files_ok = map_source(ctx, m)
   local switch = source_row(ctx, src, screen_ok, files_ok)
   if m.state ~= "ready" then
-    -- no image yet: empty state (5e), then the chosen source; older Player and no files: update hint
+    -- no image yet: empty state (5e), then the chosen source; older app and no files: update hint
     if not screen_ok and not files_ok then
       return { type = "column", id = "page-map", gap = 12, children = {
         { type = "empty", id = "map-empty", title = tr("map_title"), text = tr(m.api and "map_empty_text" or "map_no_api") } } }

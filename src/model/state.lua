@@ -26,7 +26,7 @@ S.MAX_PLACES = 600
 ---   badges = number
 ---   names  = { sp = { ["<species id>"] = name }, loc = { ["<location id>"] = name } }   display names read from
 ---            the game when a catch / encounter / place was recorded (short, one entry per id), so other
----            players and the Hub show names without a running game
+---            players and the server show names without a running game
 ---   areas  = { <location id>, ... }   encounter areas in game order (pokemon-core areas()), for ordering
 ---   places = { <location id>, ... }   every place of the game in game order (pokemon-core locations(), else
 ---            the areas), for the place select; areas is the subset with encounter slots
@@ -48,7 +48,7 @@ function S.new(game)
   })
 end
 
---- Complete a state received from the Hub (nil or older shape) so the model can use it.
+--- Complete a state received from the server (nil or older shape) so the model can use it.
 function S.ensure(st)
   if type(st) ~= "table" then return S.new() end
   st.v = st.v or S.VERSION
