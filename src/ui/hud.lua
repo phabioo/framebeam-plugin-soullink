@@ -1,4 +1,5 @@
--- HUD widget (design 5c): compact place + status; expanded with the other players.
+-- HUD widget (design 5b-2 / 5c): compact "SL · <place>" + status badge; expanded with the other players.
+-- The host draws the plugin icon and the HUD frame, so there is no badge or frame of our own.
 local common = require("ui.common")
 
 local M = {}
@@ -7,8 +8,6 @@ function M.empty(tr)
   return { type = "text", id = "hud-empty", text = tr("hud_empty"), style = "meta" }
 end
 
-local function dot(status) return "●" end
-
 --- ctx.ui.hud_expanded / ctx.hud_death (text, set for ~3 s after a linked death).
 function M.build(ctx)
   local tr, view = ctx.tr, ctx.view
@@ -16,10 +15,9 @@ function M.build(ctx)
   if not me then return M.empty(tr) end
   local status = me.place.status
   local compact = { type = "row", id = "hud-row", gap = 8, align = "center", children = {
-    { type = "badge", id = "hud-sl", text = "SL", tone = "info" },
-    { type = "text", id = "hud-place", text = common.short(common.place_label(me.place, tr, view), 24), style = "body" },
-    { type = "text", id = "hud-status", text = dot(status) .. " " .. tr("hud_status_" .. status),
-      tone = common.status_tone(status), style = "meta" },
+    { type = "text", id = "hud-place", style = "body",
+      text = tr("hud_place", { place = common.short(common.place_label(me.place, tr, view), 24) }) },
+    { type = "badge", id = "hud-status", text = tr("hud_status_" .. status), tone = common.status_tone(status) },
   } }
   local kids = { compact }
   if ctx.hud_death then

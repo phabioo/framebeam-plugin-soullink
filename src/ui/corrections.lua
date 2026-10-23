@@ -46,10 +46,23 @@ local function buttons(ctx, corr)
     submit.confirm = { title = tr("c_confirm_title_" .. corr.kind), text = tr("c_confirm_text_" .. corr.kind),
       confirm_label = tr("c_submit_" .. corr.kind), danger = danger }
   end
+  -- board order (5f-1): the action first, then Cancel
   return { type = "row", id = "corr-buttons", gap = 8, children = {
-    { type = "button", id = "corr-cancel", label = tr("cancel"), action = "corr_cancel", variant = "quiet" },
     submit,
+    { type = "button", id = "corr-cancel", label = tr("cancel"), action = "corr_cancel", variant = "secondary" },
   } }
+end
+
+--- A mon of the own player (the forms act on the own team and box), or nil.
+local function own_mon(ctx, corr)
+  local p = common.player(ctx.view, corr.user or ctx.me)
+  return p and corr.mon and p.mons[corr.mon] or nil
+end
+
+--- "Logged as manual with your name; <others> see it and can undo it" (the rule of 5f: nobody's change is silent).
+local function who_sees(ctx, others)
+  local key = (others ~= "") and "c_who" or "c_who_alone"
+  return { type = "text", id = "c-who", text = ctx.tr(key, { others = others }), style = "meta" }
 end
 
 --- Returns the section block, or nil when no form is open.
@@ -63,24 +76,53 @@ function M.section(ctx)
   local route_label = corr.route and common.route_label(ctx, corr.route) or ""
   local others = common.others_names(view, ctx.me)
 
+  local title = tr("c_title_" .. k)
   if k == "doesnt_count" then
+    -- the creature line (icon, "Wild <species> · <route>") when the encounter is known
+    local row = corr.route and common.row_of(view, corr.route)
+    local cell = row and row.cells[corr.user or ctx.me]
+    if cell and cell.species then
+      local line = { type = "text", id = "c-mon", style = "meta",
+        text = tr("c_dc_mon", { mon = common.species_label(cell), route = route_label }) }
+      local icon = common.icon_block(ctx, "c-mon-i", { species = cell.species, species_name = cell.species_name }, nil, "s")
+      add(icon and { type = "row", id = "c-mon-row", gap = 8, align = "center", children = { icon, line } } or line)
+    end
     add({ type = "text", id = "c-text", text = tr("c_dc_text", { route = route_label, others = others }), style = "meta" })
     add({ type = "segmented", id = "c-reason", action = "cf:reason", selected = corr.reason or "wrong", options = {
       { value = "dupe", label = tr("reason_dupe") }, { value = "shiny", label = tr("reason_shiny") },
       { value = "wrong", label = tr("reason_wrong") } } })
   elseif k == "undo_death" then
-    add({ type = "text", id = "c-text", text = tr("c_undo_text", { n = corr.number or "?" }), style = "meta" })
+    if corr.number then title = tr("c_title_undo_death_n", { n = corr.number }) end
+    local icons = {}
+    for i, m in ipairs(corr.members or {}) do
+      local ic = common.icon_block(ctx, "c-mi" .. i, { species = m.species, species_name = m.species_name, form = m.form,
+        nickname = m.nickname, dead = true }, nil, "s")
+      if ic then icons[#icons + 1] = ic end
+    end
+    if #icons > 0 then add({ type = "row", id = "c-icons", gap = 4, children = icons }) end
     for i, m in ipairs(corr.members or {}) do
       add({ type = "text", id = "c-m" .. i, text = tr("c_undo_member", { player = common.name_of(view, m.owner),
         mon = common.mon_name(m) }), style = "body" })
     end
+    add({ type = "text", id = "c-text", text = tr("c_undo_text", { n = corr.number or "?" }), style = "meta" })
     add({ type = "textfield", id = "c-note", action = "cf:note", text = corr.note or "", placeholder = tr("c_reason_placeholder") })
   elseif k == "set_group" then
-    add({ type = "text", id = "c-text", text = tr("c_group_text"), style = "meta" })
+    local m = own_mon(ctx, corr)
+    local mon = m and common.mon_name(m) or "?"
+    if m then
+      local species = common.species_label(m)
+      add({ type = "text", id = "c-mon", style = "heading",
+        text = (mon ~= species) and tr("c_group_mon", { mon = mon, species = species }) or mon })
+    end
+    add({ type = "text", id = "c-text", text = tr("c_group_text", { mon = mon }), style = "meta" })
     local opts = common.route_options(ctx, tr("c_group_none"), corr.group)
     add({ type = "select", id = "c-group", action = "cf:group", options = opts, selected = corr.group or "none" })
+    add(who_sees(ctx, others))
   elseif k == "add" then
-    add({ type = "text", id = "c-text", text = tr("c_add_text"), style = "meta" })
+    local row = corr.route and common.row_of(view, corr.route)
+    local cell = row and row.cells[corr.user or ctx.me]
+    add({ type = "text", id = "c-text", style = "meta",
+      text = tr((cell and cell.state == "missed") and "c_add_text_missed" or "c_add_text", { route = route_label }) })
     local opts = common.route_options(ctx, nil, corr.route)
     add({ type = "select", id = "c-route", action = "cf:route", options = opts,
       selected = corr.route or (opts[1] and opts[1].value) })
@@ -92,13 +134,18 @@ function M.section(ctx)
     add({ type = "segmented", id = "c-state", action = "cf:state", selected = corr.state or "box", options = {
       { value = "box", label = tr("state_box") }, { value = "team", label = tr("state_team") },
       { value = "dead", label = tr("state_dead") } } })
+    add(who_sees(ctx, others))
   elseif k == "mark_missed" then
+    title = tr("c_title_mark_missed_route", { route = route_label })
     add({ type = "text", id = "c-text", text = tr("c_missed_text", { route = route_label, others = others }), style = "meta" })
+    add(who_sees(ctx, others))
   elseif k == "mark_dead" then
     add({ type = "text", id = "c-text", text = tr("c_dead_text"), style = "meta" })
     add({ type = "textfield", id = "c-note", action = "cf:note", text = corr.note or "", placeholder = tr("c_reason_placeholder") })
+    add(who_sees(ctx, others))
   elseif k == "set_gift" then
     add({ type = "toggle", id = "c-gift", action = "cf:gift", label = tr("c_gift_label"), checked = corr.gift ~= false })
+    add(who_sees(ctx, others))
   elseif k == "revert" then
     add({ type = "text", id = "c-text", text = tr("c_revert_text", { seq = corr.target or "?" }), style = "meta" })
     add({ type = "textfield", id = "c-note", action = "cf:note", text = corr.note or "", placeholder = tr("c_reason_placeholder") })
@@ -108,7 +155,7 @@ function M.section(ctx)
   end
   add({ type = "text", id = "c-hint", text = tr("c_enter_hint"), style = "meta" })
   add(buttons(ctx, corr))
-  return { type = "section", id = "corr", title = tr("c_title_" .. k), children = kids }
+  return { type = "section", id = "corr", title = title, children = kids }
 end
 
 return M

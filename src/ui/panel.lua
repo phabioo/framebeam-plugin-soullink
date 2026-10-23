@@ -5,6 +5,7 @@
 -- fb.ui.open; the panel then says so instead of showing the buttons that open the screen.
 local common = require("ui.common")
 local corr_ui = require("ui.corrections")
+local oras = require("data.oras")
 
 local M = {}
 
@@ -23,7 +24,8 @@ local function header(ctx)
   if ctx.can_open then
     row[#row + 1] = { type = "button", id = "h-open", label = tr("open_run_link"), action = "open_run", variant = "quiet" }
   end
-  local kids = { { type = "text", id = "h-eyebrow", text = tr("panel_eyebrow_" .. ctx.view.mode), style = "eyebrow" } }
+  -- the host draws the "DRAWN BY SOULLINK" marker, so there is no eyebrow of our own
+  local kids = {}
   if not common.writable(run) then
     kids[#kids + 1] = { type = "badge", id = "h-ro", text = tr("run_readonly_" .. tostring(run.status)), tone = "warning" }
   end
@@ -111,13 +113,19 @@ local function encounter_hint(ctx, me)
   if me.place.status ~= "encounter" or ctx.readonly then return nil end
   local row = common.row_of(ctx.view, me.place.key)
   local cell = row and row.cells[me.id] or {}
-  local text = { type = "text", id = "enc-text", text = tr("enc_text", { mon = common.species_label(cell) }), style = "meta" }
+  local text = { type = "column", id = "enc-col", gap = 0, children = {
+    { type = "text", id = "enc-text", text = tr("enc_text", { mon = common.species_label(cell) }), style = "body" },
+    { type = "text", id = "enc-meta", text = tr("enc_meta"), style = "meta" },
+  } }
   local icon = cell.species and common.icon_block(ctx, "enc-i", { species = cell.species, species_name = cell.species_name }, nil, "s")
   local head = text
   if icon then head = { type = "row", id = "enc-row", gap = 8, align = "center", children = { icon, text } } end
-  return { type = "card", id = "enc", title = tr("enc_title"), children = {
+  local act = { { type = "button", id = "enc-no", label = tr("doesnt_count"), action = "dc_open", variant = "quiet" } }
+  local key = common.HOTKEYS["doesnt-count"]
+  if key then act[#act + 1] = { type = "text", id = "enc-key", text = key, style = "meta" } end
+  return { type = "card", id = "enc", eyebrow = tr("enc_eyebrow"), children = {
     head,
-    { type = "button", id = "enc-no", label = tr("doesnt_count"), action = "dc_open", variant = "quiet" },
+    { type = "row", id = "enc-acts", gap = 8, align = "center", children = act },
   } }
 end
 
@@ -142,7 +150,9 @@ local function partners(ctx, me, i, m, groups)
   if more > 0 then
     kids[#kids + 1] = { type = "text", id = "m-pm" .. i, text = "+" .. more, style = "meta" }
   end
-  return { type = "row", id = "m-pr" .. i, gap = 4, align = "center", children = kids }
+  local row = { type = "row", id = "m-pr" .. i, gap = 4, align = "center", children = kids }
+  return { type = "column", id = "m-pc" .. i, gap = 2, children = {
+    { type = "text", id = "m-pl" .. i, text = ctx.tr("linked_with"), style = "eyebrow" }, row } }
 end
 
 local function team(ctx, me)
@@ -176,7 +186,7 @@ end
 local function graveyard(ctx)
   local tr, view = ctx.tr, ctx.view
   local open = ctx.ui.grave_open
-  local kids = { { type = "chip", id = "grave-chip", text = tr("grave_title", { n = #view.graveyard }),
+  local kids = { { type = "chip", id = "grave-chip", text = tr(open and "grave_hide" or "grave_show"),
     action = "grave_toggle", selected = open and true or false } }
   if open then
     local rows = {}
@@ -193,7 +203,8 @@ end
 
 local function footer(ctx, me)
   local tr = ctx.tr
-  local text = tr("panel_footer", { n = me.badges })
+  -- "Graveyard 3 · Badges 4 / 8 · next cap Lv 24": the badge total is the game's (8 for the supported games)
+  local text = tr("panel_footer", { grave = #ctx.view.graveyard, n = me.badges, total = oras.BADGES })
   if me.level_cap then text = text .. " · " .. tr("next_cap_short", { n = me.level_cap }) end
   local kids = { { type = "text", id = "badges", text = text, style = "meta" } }
   if ctx.badges_manual and not ctx.readonly then
@@ -201,9 +212,7 @@ local function footer(ctx, me)
     for n = 0, 8 do opts[#opts + 1] = { value = n, label = tostring(n) } end
     kids[#kids + 1] = { type = "select", id = "badges-select", options = opts, selected = me.badges, action = "badges_select" }
   end
-  if ctx.can_open then
-    kids[#kids + 1] = { type = "button", id = "f-open", label = tr("run_screen"), action = "open_run", variant = "secondary" }
-  else
+  if not ctx.can_open then
     kids[#kids + 1] = { type = "text", id = "f-update", text = tr("update_to_open"), style = "meta" }
   end
   return { type = "column", id = "footer", gap = 8, children = kids }

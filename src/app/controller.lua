@@ -800,6 +800,9 @@ function A:on_action(action, value, slot)
     end
   elseif action:sub(1, 3) == "rf:" then self.ui.routes_filter = action:sub(4); self.dirty = true
   elseif action:sub(1, 3) == "lf:" then self.ui.log_filter = action:sub(4); self.dirty = true
+  elseif action == "log_person" then
+    self.ui.log_person = (type(value) == "string" and value ~= "all") and value or nil
+    self.dirty = true
   elseif action == "route_select" then self.ui.selected_route = value; self.dirty = true
   elseif action == "map_select" then
     if type(value) == "table" then
